@@ -1236,7 +1236,7 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private void attachChild(View child, int index) {
-        LayoutParams lp = child.getLayoutParams();
+        ViewGroup.LayoutParams lp = child.getLayoutParams();
         if (lp == null) {
             lp = generateDefaultLayoutParams();
         }
