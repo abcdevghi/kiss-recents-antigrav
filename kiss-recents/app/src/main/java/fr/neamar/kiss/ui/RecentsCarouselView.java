@@ -77,6 +77,7 @@ public class RecentsCarouselView extends FrameLayout {
     private static final int STAGGER_CLEAR_ALL_MS = 35;
     private static final float FAST_WHEEL_ITEMS_PER_SEC = 5.5f;
     private static final long THUMBNAIL_STABILIZE_DELAY_MS = 75L;
+    private static final float EDGE_OVERSCROLL_RANGE_ITEMS = 2.6f;
 
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
     private static final Interpolator DECELERATE = new DecelerateInterpolator(1.6f);
@@ -161,6 +162,7 @@ public class RecentsCarouselView extends FrameLayout {
 
     private int flingTargetVisualIdx = -1;
     private boolean suppressContextMenuOnHorizontalSnap = false;
+    private float rawScrollItemPos = 0f;
     private float wheelSpeedItemsPerSec = 0f;
     private long lastVelSampleTimeMs = 0L;
     private boolean thumbnailsSuppressed = false;
@@ -619,6 +621,7 @@ public class RecentsCarouselView extends FrameLayout {
         dismissHapticFired = false;
         flingTargetVisualIdx = -1;
         suppressContextMenuOnHorizontalSnap = false;
+        rawScrollItemPos = unmapOverscroll(scrollItemPos, Math.max(0, getItemCount() - 1));
         wheelSpeedItemsPerSec = 0f;
         lastVelSampleTimeMs = SystemClock.uptimeMillis();
         thumbnailsSuppressed = false;
@@ -694,11 +697,9 @@ public class RecentsCarouselView extends FrameLayout {
             float pxPerItem = unfocusedHeightPx + itemGapPx;
             float deltaItems = -stepDy / Math.max(1f, pxPerItem);
             int maxIdx = Math.max(0, getItemCount() - 1);
-            if ((scrollItemPos < 0f && deltaItems < 0f) || (scrollItemPos > maxIdx && deltaItems > 0f)) {
-                deltaItems *= 0.40f;
-            }
             float oldPos = scrollItemPos;
-            scrollItemPos = clamp(scrollItemPos + deltaItems, -0.45f, maxIdx + 0.45f);
+            rawScrollItemPos += deltaItems;
+            scrollItemPos = mapOverscroll(rawScrollItemPos, maxIdx);
             scrollSwayPx = clamp(-stepDy * 0.35f, -maxScrollSwayPx, maxScrollSwayPx);
             updateWheelSpeed(oldPos, scrollItemPos);
             thumbnailsSuppressed = isWheelMovingFast();
@@ -1033,10 +1034,11 @@ public class RecentsCarouselView extends FrameLayout {
             layoutCarousel();
             return;
         }
+        boolean isEdgeSpring = elastic && (scrollItemPos < 0f || scrollItemPos > Math.max(0, getItemCount() - 1));
         cancelAnimator(scrollAnimator);
         scrollAnimator = ValueAnimator.ofFloat(scrollItemPos, targetVisualPos);
-        scrollAnimator.setDuration(elastic ? 155 : 210);
-        scrollAnimator.setInterpolator(elastic ? OVERSHOOT : FAST_OUT_SLOW_IN);
+        scrollAnimator.setDuration(isEdgeSpring ? 230 : (elastic ? 155 : 210));
+        scrollAnimator.setInterpolator(isEdgeSpring ? ELASTIC_SNAP : (elastic ? OVERSHOOT : FAST_OUT_SLOW_IN));
         scrollAnimator.addUpdateListener(anim -> {
             scrollItemPos = (float) anim.getAnimatedValue();
             if (updateAutoSelect) {
@@ -1289,7 +1291,7 @@ public class RecentsCarouselView extends FrameLayout {
                 float swayTx = scrollSwayPx * 0.45f;
                 float expandScale = 0.88f + 0.12f * clamp(bannerExpandProgress, 0f, 1f);
                 float totalScale = grabScale * expandScale;
-                child.setPivotX(childWidth * 0.5f);
+                child.setPivotX(0f);
                 child.setPivotY(childHeight * 0.5f);
                 child.setScaleX(totalScale);
                 child.setScaleY(totalScale);
@@ -1691,6 +1693,28 @@ public class RecentsCarouselView extends FrameLayout {
         float eased = t * t * (3f - 2f * t);
         float push = (distIdx >= 0f ? 1f : -1f) * extraHalf * eased;
         return focalY + distIdx * stepPx + push;
+    }
+
+    private static float mapOverscroll(float rawPos, int maxIdx) {
+        if (rawPos < 0f) {
+            return -rubberBand(-rawPos, EDGE_OVERSCROLL_RANGE_ITEMS);
+        }
+        if (rawPos > maxIdx) {
+            return maxIdx + rubberBand(rawPos - maxIdx, EDGE_OVERSCROLL_RANGE_ITEMS);
+        }
+        return rawPos;
+    }
+
+    private static float unmapOverscroll(float mappedPos, int maxIdx) {
+        if (mappedPos < 0f) {
+            float d = Math.min(EDGE_OVERSCROLL_RANGE_ITEMS * 0.92f, -mappedPos);
+            return -(d * EDGE_OVERSCROLL_RANGE_ITEMS) / Math.max(0.05f, EDGE_OVERSCROLL_RANGE_ITEMS - d);
+        }
+        if (mappedPos > maxIdx) {
+            float d = Math.min(EDGE_OVERSCROLL_RANGE_ITEMS * 0.92f, mappedPos - maxIdx);
+            return maxIdx + (d * EDGE_OVERSCROLL_RANGE_ITEMS) / Math.max(0.05f, EDGE_OVERSCROLL_RANGE_ITEMS - d);
+        }
+        return mappedPos;
     }
 
     private static float rubberBand(float distance, float range) {
