@@ -14,6 +14,7 @@ import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
@@ -88,6 +89,7 @@ public class RecentsCarouselView extends FrameLayout {
     private final int bannerHeightPx;
     private final int itemGapPx;
     private final int horizontalMarginPx;
+    private final int bannerHorizontalMarginPx;
     private final int contextShiftPx;
     private final int contextMenuButtonSizePx;
     private final int contextMenuStepPx;
@@ -99,7 +101,7 @@ public class RecentsCarouselView extends FrameLayout {
     private final Set<Integer> inFlightSnapshots = new HashSet<>();
 
     private View bannerView;
-    private FrameLayout contextMenuLayer;
+    private ContextMenuOverlay contextMenuLayer;
     private ImageButton btnInfo;
     private ImageButton btnUninstall;
     private ImageButton btnKeep;
@@ -123,6 +125,8 @@ public class RecentsCarouselView extends FrameLayout {
     private float contextMenuProgress = 0f;
     private float scrollSwayPx = 0f;
     private boolean grabbedSelected = false;
+    private boolean inLayout = false;
+    private float lastSelectedScreenCenterY = 0f;
 
     private int dismissingVisualIndex = -1;
     private float dismissingDx = 0f;
@@ -207,8 +211,9 @@ public class RecentsCarouselView extends FrameLayout {
         unfocusedHeightPx = resolveUnfocusedRowHeight(context);
         bannerHeightPx = getResources().getDimensionPixelSize(R.dimen.banner_card_height);
         itemGapPx = DrawableUtils.dpToPx(context, 6f);
-        horizontalMarginPx = DrawableUtils.dpToPx(context, 16f);
-        contextShiftPx = DrawableUtils.dpToPx(context, 78f);
+        horizontalMarginPx = DrawableUtils.dpToPx(context, 22f);
+        bannerHorizontalMarginPx = DrawableUtils.dpToPx(context, 32f);
+        contextShiftPx = DrawableUtils.dpToPx(context, 60f);
         contextMenuButtonSizePx = DrawableUtils.dpToPx(context, 44f);
         contextMenuStepPx = DrawableUtils.dpToPx(context, 52f);
         maxScrollSwayPx = DrawableUtils.dpToPx(context, 14f);
@@ -228,9 +233,7 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private void initContextMenuLayer(Context context) {
-        contextMenuLayer = new FrameLayout(context);
-        contextMenuLayer.setClipChildren(false);
-        contextMenuLayer.setClipToPadding(false);
+        contextMenuLayer = new ContextMenuOverlay(context);
         contextMenuLayer.setElevation(DrawableUtils.dpToPx(context, 10f));
         contextMenuLayer.setVisibility(View.GONE);
 
@@ -437,6 +440,29 @@ public class RecentsCarouselView extends FrameLayout {
                             }
                         }
                     });
+        }
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        int width = getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec);
+        int height = getDefaultSize(getSuggestedMinimumHeight(), heightMeasureSpec);
+        setMeasuredDimension(width, height);
+
+        if (contextMenuLayer != null && contextMenuLayer.getVisibility() != GONE) {
+            int wSpec = MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY);
+            int hSpec = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
+            contextMenuLayer.measure(wSpec, hSpec);
+        }
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        inLayout = true;
+        try {
+            layoutCarousel();
+        } finally {
+            inLayout = false;
         }
     }
 
@@ -926,8 +952,9 @@ public class RecentsCarouselView extends FrameLayout {
             return;
         }
 
-        int rowWidth = Math.max(1, width - 2 * horizontalMarginPx);
-        float focalY = height * 0.56f;
+        int unfocusedWidth = Math.max(1, width - 2 * horizontalMarginPx);
+        int bannerWidth = Math.max(1, width - 2 * bannerHorizontalMarginPx);
+        float focalY = height * 0.52f;
         float arcRadius = Math.max(height * 0.95f, DrawableUtils.dpToPx(getContext(), 520f));
 
         ensureScratchCapacity(count);
@@ -986,17 +1013,23 @@ public class RecentsCarouselView extends FrameLayout {
             }
 
             View child;
+            int childLeft;
+            int childWidth;
             int childHeight;
             if (isSelected) {
                 child = obtainAndBindBanner(visualToAdapterPos(v));
                 child.setVisibility(View.VISIBLE);
+                childLeft = bannerHorizontalMarginPx;
+                childWidth = bannerWidth;
                 childHeight = bannerHeightPx;
             } else {
                 child = obtainAndBindUnfocused(v, visualToAdapterPos(v));
+                childLeft = horizontalMarginPx;
+                childWidth = unfocusedWidth;
                 childHeight = unfocusedHeightPx;
             }
 
-            layoutChildFrame(child, horizontalMarginPx, Math.round(centerY - childHeight * 0.5f), rowWidth, childHeight);
+            layoutChildFrame(child, childLeft, Math.round(centerY - childHeight * 0.5f), childWidth, childHeight);
 
             float dy = centerY - focalY;
             float normDist = Math.min(1.4f, Math.abs(dy) / Math.max(1f, height * 0.48f));
@@ -1012,7 +1045,7 @@ public class RecentsCarouselView extends FrameLayout {
             if (isSelected) {
                 float contextTx = -contextShiftPx * contextMenuProgress;
                 float swayTx = scrollSwayPx * 0.45f;
-                child.setPivotX(rowWidth * 0.5f);
+                child.setPivotX(childWidth * 0.5f);
                 child.setPivotY(childHeight * 0.5f);
                 child.setScaleX(grabScale);
                 child.setScaleY(grabScale);
@@ -1035,11 +1068,11 @@ public class RecentsCarouselView extends FrameLayout {
             }
         }
 
-        if (bannerView != null && bannerView.getParent() == this) {
-            bannerView.bringToFront();
+        lastSelectedScreenCenterY = selectedScreenCenterY;
+        if (contextMenuLayer.getVisibility() != View.GONE) {
+            layoutChildFrame(contextMenuLayer, 0, 0, width, height);
+            layoutContextMenuButtons(selectedScreenCenterY);
         }
-        contextMenuLayer.bringToFront();
-        layoutContextMenuButtons(selectedScreenCenterY);
     }
 
     private void updateContextMenuVisibilityAndLayout() {
@@ -1150,10 +1183,14 @@ public class RecentsCarouselView extends FrameLayout {
     private View obtainAndBindBanner(int adapterPos) {
         if (bannerView == null) {
             bannerView = LayoutInflater.from(getContext()).inflate(R.layout.item_app_banner, this, false);
-            addView(bannerView);
+            int idx = contextMenuLayer != null && contextMenuLayer.getParent() == this
+                    ? Math.max(0, getChildCount() - 1) : -1;
+            attachChild(bannerView, idx);
             bannerBoundAdapterPos = -1;
         } else if (bannerView.getParent() != this) {
-            addView(bannerView);
+            int idx = contextMenuLayer != null && contextMenuLayer.getParent() == this
+                    ? Math.max(0, getChildCount() - 1) : -1;
+            attachChild(bannerView, idx);
             bannerBoundAdapterPos = -1;
         }
         if (bannerBoundAdapterPos != adapterPos) {
@@ -1191,11 +1228,34 @@ public class RecentsCarouselView extends FrameLayout {
                 : recycledUnfocusedViews.remove(recycledUnfocusedViews.size() - 1);
         View bound = adapter.getItem(adapterPos).display(getContext(), convertView, this, null);
         if (bound.getParent() != this) {
-            addView(bound);
+            attachChild(bound, 0);
         }
         bound.setVisibility(View.VISIBLE);
         boundUnfocusedViews.put(visualIdx, bound);
         return bound;
+    }
+
+    private void attachChild(View child, int index) {
+        LayoutParams lp = child.getLayoutParams();
+        if (lp == null) {
+            lp = generateDefaultLayoutParams();
+        }
+        if (inLayout) {
+            addViewInLayout(child, index, lp, true);
+        } else {
+            addView(child, index, lp);
+        }
+    }
+
+    private void detachChild(View child) {
+        if (child.getParent() != this) {
+            return;
+        }
+        if (inLayout) {
+            removeViewInLayout(child);
+        } else {
+            removeView(child);
+        }
     }
 
     private void clearAllItemViews() {
@@ -1221,7 +1281,7 @@ public class RecentsCarouselView extends FrameLayout {
         view.setScaleX(1f);
         view.setScaleY(1f);
         view.setAlpha(1f);
-        removeView(view);
+        detachChild(view);
         recycledUnfocusedViews.add(view);
     }
 
@@ -1232,6 +1292,34 @@ public class RecentsCarouselView extends FrameLayout {
             child.measure(wSpec, hSpec);
         }
         child.layout(left, top, left + width, top + height);
+    }
+
+    private final class ContextMenuOverlay extends ViewGroup {
+
+        ContextMenuOverlay(Context context) {
+            super(context);
+            setClipChildren(false);
+            setClipToPadding(false);
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int w = MeasureSpec.getSize(widthMeasureSpec);
+            int h = MeasureSpec.getSize(heightMeasureSpec);
+            setMeasuredDimension(w, h);
+            int btnSpec = MeasureSpec.makeMeasureSpec(contextMenuButtonSizePx, MeasureSpec.EXACTLY);
+            for (int i = 0; i < getChildCount(); i++) {
+                View child = getChildAt(i);
+                if (child.getVisibility() != GONE) {
+                    child.measure(btnSpec, btnSpec);
+                }
+            }
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            layoutContextMenuButtons(lastSelectedScreenCenterY);
+        }
     }
 
     private void requestSnapshotsAroundSelection() {

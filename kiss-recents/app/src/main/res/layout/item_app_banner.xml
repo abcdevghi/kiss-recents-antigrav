@@ -26,7 +26,8 @@
     <View
         android:id="@+id/banner_scrim"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="84dp"
+        android:layout_gravity="top"
         android:background="@drawable/banner_scrim" />
 
     <LinearLayout
@@ -36,7 +37,7 @@
         android:orientation="vertical"
         android:paddingStart="16dp"
         android:paddingTop="14dp"
-        android:paddingEnd="44dp"
+        android:paddingEnd="16dp"
         android:paddingBottom="8dp">
 
         <TextView
@@ -73,16 +74,6 @@
             tools:text="@string/keep_alive_label"
             tools:visibility="visible" />
     </LinearLayout>
-
-    <ImageView
-        android:id="@+id/banner_play_icon"
-        android:layout_width="24dp"
-        android:layout_height="24dp"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="12dp"
-        android:layout_marginBottom="10dp"
-        android:contentDescription="@string/cd_resume_app"
-        android:src="@drawable/ic_play_arrow" />
 
     <View
         android:id="@+id/banner_outline"
