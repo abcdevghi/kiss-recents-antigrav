@@ -8,8 +8,11 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.TypedArray;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.util.TypedValue;
@@ -19,6 +22,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.AttrRes;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
 
@@ -114,7 +118,25 @@ public final class Appearance {
         if (isWallpaperEnabled(prefs)) {
             window.setFormat(PixelFormat.TRANSLUCENT);
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
-            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setBackgroundDrawable(new Drawable() {
+                @Override
+                public void draw(@NonNull Canvas canvas) {
+                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                }
+
+                @Override
+                public void setAlpha(int alpha) {
+                }
+
+                @Override
+                public void setColorFilter(@Nullable ColorFilter colorFilter) {
+                }
+
+                @Override
+                public int getOpacity() {
+                    return PixelFormat.TRANSLUCENT;
+                }
+            });
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
             window.setFormat(PixelFormat.OPAQUE);

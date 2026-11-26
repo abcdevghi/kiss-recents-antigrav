@@ -31,6 +31,7 @@ import fr.neamar.kiss.searcher.SearchHandler;
 import fr.neamar.kiss.searcher.Searcher;
 import fr.neamar.kiss.ui.ListPopup;
 import fr.neamar.kiss.ui.RecentsCarouselView;
+import fr.neamar.kiss.ui.WallpaperClearLayout;
 import fr.neamar.kiss.utils.Log;
 import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.SystemBars;
@@ -63,6 +64,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     public SharedPreferences prefs;
     public RecentsCarouselView carousel;
 
+    private WallpaperClearLayout rootLayout;
     private View listContainer;
     private View emptyListView;
     private View launcherButton;
@@ -104,8 +106,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         View contentView = findViewById(android.R.id.content);
         SystemBars.applyInsets(contentView, contentView);
 
+        boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
+        rootLayout = findViewById(R.id.mainRoot);
+        rootLayout.setClearTransparentViewport(wallpaperEnabled);
         listContainer = findViewById(R.id.resultLayout);
         carousel = findViewById(R.id.recentsCarousel);
+        carousel.setTransparentViewport(wallpaperEnabled);
         Appearance.applyRoundedCorners(prefs, findViewById(R.id.searchEditLayout), listContainer);
         emptyListView = findViewById(android.R.id.empty);
         launcherButton = findViewById(R.id.launcherButton);
@@ -158,6 +164,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 listContainer.setVisibility(empty ? View.GONE : View.VISIBLE);
                 emptyListView.setVisibility(empty ? View.VISIBLE : View.GONE);
                 carousel.onDatasetChanged(false);
+                if (rootLayout != null) {
+                    rootLayout.invalidate();
+                }
             }
         });
 

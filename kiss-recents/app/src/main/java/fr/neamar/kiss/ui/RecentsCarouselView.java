@@ -16,6 +16,7 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
@@ -167,6 +168,7 @@ public class RecentsCarouselView extends FrameLayout {
     private long lastVelSampleTimeMs = 0L;
     private boolean thumbnailsSuppressed = false;
     private boolean bannerBoundLightweight = false;
+    private boolean transparentViewport = false;
 
     private final Runnable stabilizeThumbnailsRunnable = new Runnable() {
         @Override
@@ -187,14 +189,25 @@ public class RecentsCarouselView extends FrameLayout {
                 thumbnailsSuppressed = isWheelMovingFast();
                 updateAutoSelectionFromScroll(true);
 
-                int targetIdx = flingTargetVisualIdx;
-                if (targetIdx >= 0 && Math.abs(scrollItemPos - targetIdx) <= 0.22f
-                        && Math.abs(scrollItemPos - targetIdx) < Math.abs(oldPos - targetIdx)) {
-                    scrollScroller.abortAnimation();
-                    flingTargetVisualIdx = -1;
-                    snapScrollTo(targetIdx, true, true);
-                    releaseScrollSway();
-                    return;
+                int maxIdx = Math.max(0, getItemCount() - 1);
+                if (flingTargetVisualIdx < 0) {
+                    if ((scrollItemPos < -0.01f && scrollItemPos >= oldPos)
+                            || (scrollItemPos > maxIdx + 0.01f && scrollItemPos <= oldPos)) {
+                        scrollScroller.abortAnimation();
+                        snapScrollTo(scrollItemPos < 0f ? 0f : maxIdx, true, true);
+                        releaseScrollSway();
+                        return;
+                    }
+                } else {
+                    int targetIdx = flingTargetVisualIdx;
+                    if (Math.abs(scrollItemPos - targetIdx) <= 0.22f
+                            && Math.abs(scrollItemPos - targetIdx) < Math.abs(oldPos - targetIdx)) {
+                        scrollScroller.abortAnimation();
+                        flingTargetVisualIdx = -1;
+                        snapScrollTo(targetIdx, true, true);
+                        releaseScrollSway();
+                        return;
+                    }
                 }
 
                 layoutCarousel();
@@ -353,6 +366,10 @@ public class RecentsCarouselView extends FrameLayout {
         }
     }
 
+    public void setTransparentViewport(boolean transparentViewport) {
+        this.transparentViewport = transparentViewport;
+    }
+
     public boolean isContextMenuOpen() {
         return contextMenuProgress > 0.05f;
     }
@@ -385,6 +402,11 @@ public class RecentsCarouselView extends FrameLayout {
         dismissingVisualIndex = -1;
         dismissingDx = 0f;
         contextMenuLayer.setVisibility(View.GONE);
+        clearAllItemViews();
+        if (bannerView != null) {
+            bannerView.setVisibility(View.GONE);
+        }
+        invalidateViewport();
     }
 
     public void onDatasetChanged(boolean resetScrollIfFresh) {
@@ -1046,7 +1068,7 @@ public class RecentsCarouselView extends FrameLayout {
         boolean isEdgeSpring = elastic && (scrollItemPos < 0f || scrollItemPos > Math.max(0, getItemCount() - 1));
         cancelAnimator(scrollAnimator);
         scrollAnimator = ValueAnimator.ofFloat(scrollItemPos, targetVisualPos);
-        scrollAnimator.setDuration(isEdgeSpring ? 230 : (elastic ? 155 : 210));
+        scrollAnimator.setDuration(isEdgeSpring ? 205 : (elastic ? 155 : 210));
         scrollAnimator.setInterpolator(isEdgeSpring ? ELASTIC_SNAP : (elastic ? OVERSHOOT : FAST_OUT_SLOW_IN));
         scrollAnimator.addUpdateListener(anim -> {
             scrollItemPos = (float) anim.getAnimatedValue();
@@ -1330,6 +1352,7 @@ public class RecentsCarouselView extends FrameLayout {
             layoutChildFrame(contextMenuLayer, 0, 0, width, height);
             layoutContextMenuButtons(selectedScreenCenterY);
         }
+        invalidateViewport();
     }
 
     private void updateContextMenuVisibilityAndLayout() {
@@ -1339,7 +1362,10 @@ public class RecentsCarouselView extends FrameLayout {
                 contextMenuLayer.setVisibility(View.VISIBLE);
             }
         } else {
-            contextMenuLayer.setVisibility(View.GONE);
+            if (contextMenuLayer.getVisibility() != View.GONE) {
+                contextMenuLayer.setVisibility(View.GONE);
+                invalidateViewport();
+            }
         }
     }
 
@@ -1531,6 +1557,22 @@ public class RecentsCarouselView extends FrameLayout {
             recycleUnfocusedView(boundUnfocusedViews.valueAt(i));
         }
         boundUnfocusedViews.clear();
+        invalidateViewport();
+    }
+
+    private void invalidateViewport() {
+        if (!transparentViewport) {
+            return;
+        }
+        invalidate();
+        ViewParent p = getParent();
+        if (p instanceof View) {
+            ((View) p).invalidate();
+            ViewParent gp = p.getParent();
+            if (gp instanceof View) {
+                ((View) gp).invalidate();
+            }
+        }
     }
 
     private void recycleUnfocusedView(View view) {
