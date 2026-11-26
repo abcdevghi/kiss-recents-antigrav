@@ -1,5 +1,6 @@
 package fr.neamar.kiss.searcher;
 
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -27,13 +28,16 @@ import fr.neamar.kiss.RootHandler;
 import fr.neamar.kiss.db.HistoryMode;
 import fr.neamar.kiss.pojo.AppPojo;
 import fr.neamar.kiss.pojo.Pojo;
+import fr.neamar.kiss.utils.PackageManagerUtils;
 import fr.neamar.kiss.utils.RecentTasks;
+import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.RunningApps;
+import fr.neamar.kiss.utils.UserHandle;
 
 /**
- * Builds the list of the main screen. With root mode on: the apps open in the system's task list
- * (most recent first), then every other running app, biggest memory use first. Without root,
- * or when the system gives nothing, it falls back to the launch history.
+ * Builds the list of the main screen. When the Recents Binder bridge or root mode is on: the apps
+ * open in the system's task list (most recent first), then every other running app, biggest memory
+ * use first. Otherwise, or when the system gives nothing, it falls back to the launch history.
  */
 public class HistorySearcher extends Searcher {
     /** Relevance of open tasks, above running apps. A higher relevance is displayed nearer the bar. */
@@ -51,6 +55,7 @@ public class HistorySearcher extends Searcher {
      * the package runs again.
      */
     private static final Set<String> dismissedPackages = ConcurrentHashMap.newKeySet();
+    private static final Set<Integer> dismissedTaskIds = ConcurrentHashMap.newKeySet();
     private static final Object RUNNING_LOCK = new Object();
 
     private static volatile List<AppPojo> lastTasks = Collections.emptyList();
@@ -66,14 +71,31 @@ public class HistorySearcher extends Searcher {
         }
     }
 
+    public static void markDismissedTasks(Collection<Integer> taskIds) {
+        if (taskIds != null) {
+            dismissedTaskIds.addAll(taskIds);
+        }
+    }
+
     public static void clearDismissed(String packageName) {
         if (packageName != null) {
             dismissedPackages.remove(packageName);
         }
     }
 
+    public static void clearDismissedTask(int taskId) {
+        if (taskId > 0) {
+            dismissedTaskIds.remove(taskId);
+        }
+    }
+
     public static List<AppPojo> getRecentCachedTasks(long maxAgeMs) {
-        if (SystemClock.uptimeMillis() - lastFetchUptimeMs <= maxAgeMs) {
+        return getRecentCachedTasks(maxAgeMs, 0L);
+    }
+
+    public static List<AppPojo> getRecentCachedTasks(long maxAgeMs, long minUptimeMs) {
+        long fetchTime = lastFetchUptimeMs;
+        if (fetchTime >= minUptimeMs && SystemClock.uptimeMillis() - fetchTime <= maxAgeMs) {
             return lastTasks;
         }
         return Collections.emptyList();
@@ -152,7 +174,9 @@ public class HistorySearcher extends Searcher {
         synchronized (RUNNING_LOCK) {
             RunningList result = new RunningList();
             RootHandler rootHandler = KissApplication.getApplication(activity).getRootHandler();
-            if (apps == null || !rootHandler.isRootActivated()) {
+            boolean bridgeAvailable = RecentsBridgeClient.isAvailable();
+            boolean rootActivated = rootHandler.isRootActivated();
+            if (apps == null || (!bridgeAvailable && !rootActivated)) {
                 return result;
             }
 
@@ -161,10 +185,12 @@ public class HistorySearcher extends Searcher {
                 return result;
             }
 
-            // Build O(1) lookup by package name and reset previous memory figures
+            // Build O(1) lookup by package name and reset previous task/memory figures
             Map<String, List<AppPojo>> appsByPackage = new HashMap<>(apps.size());
             for (AppPojo app : apps) {
                 app.rssKb = 0;
+                app.taskId = -1;
+                app.hasTaskIcon = false;
                 if (app.getUserHandle().isCurrentUser()) {
                     List<AppPojo> list = appsByPackage.get(app.packageName);
                     if (list == null) {
@@ -184,26 +210,62 @@ public class HistorySearcher extends Searcher {
             }
 
             // Any dismissed app that now has a live process was launched again externally
-            if (!dismissedPackages.isEmpty()) {
+            if (!dismissedPackages.isEmpty() && !snapshot.rssKbByPackage.isEmpty()) {
                 dismissedPackages.removeIf(pkg -> snapshot.rssKbByPackage.containsKey(pkg));
+            }
+            // Drop dismissed taskIds once the system no longer reports them
+            if (!dismissedTaskIds.isEmpty()) {
+                Set<Integer> liveTaskIds = new HashSet<>(snapshot.tasks.size());
+                for (RecentTasks.Task task : snapshot.tasks) {
+                    if (task.taskId > 0) {
+                        liveTaskIds.add(task.taskId);
+                    }
+                }
+                dismissedTaskIds.retainAll(liveTaskIds);
             }
 
             // 1. Open tasks, most recent first
             Set<String> taskPackages = new HashSet<>();
-            Set<AppPojo> seenTasks = new HashSet<>();
+            Set<String> seenPojoIds = new HashSet<>();
             int relevance = TASKS_RELEVANCE_BASE;
             for (RecentTasks.Task task : snapshot.tasks) {
-                if (task.userId != 0 || hidden.contains(task.packageName) || dismissedPackages.contains(task.packageName)) {
+                if (task.userId != 0 || hidden.contains(task.packageName)) {
                     // Tasks of other users (e.g. work profile) are not supported yet
                     continue;
                 }
-                AppPojo match = findApp(appsByPackage, task.packageName, task.activityName);
-                if (match == null || excludedPojoById.contains(match.id) || !seenTasks.add(match)) {
+                if (task.taskId > 0 && dismissedTaskIds.contains(task.taskId)) {
                     continue;
                 }
-                match.rssKb = getRssKb(snapshot.rssKbByPackage, task.packageName);
-                match.relevance = relevance--;
-                result.tasks.add(match);
+
+                AppPojo launcherMatch = findApp(appsByPackage, task.packageName, task.activityName);
+                boolean isParasiticOrDifferentActivity = launcherMatch != null
+                        && task.label != null
+                        && !task.label.isEmpty()
+                        && !task.activityName.equals(launcherMatch.activityName)
+                        && !task.label.equalsIgnoreCase(launcherMatch.getName());
+
+                AppPojo entry;
+                if (launcherMatch == null || isParasiticOrDifferentActivity) {
+                    // Non-launcher root apps (e.g. standalone stubs) or parasitic hosts (e.g. LSPosed inside Shell/Settings)
+                    if (!isParasiticOrDifferentActivity && !bridgeAvailable && dismissedPackages.contains(task.packageName)) {
+                        continue;
+                    }
+                    entry = createTaskPojo(activity, task);
+                } else {
+                    if (dismissedPackages.contains(task.packageName)) {
+                        continue;
+                    }
+                    entry = launcherMatch;
+                }
+
+                if (excludedPojoById.contains(entry.id) || !seenPojoIds.add(entry.id)) {
+                    continue;
+                }
+                entry.taskId = task.taskId;
+                entry.hasTaskIcon = task.hasTaskIcon;
+                entry.rssKb = getRssKb(snapshot.rssKbByPackage, task.packageName);
+                entry.relevance = relevance--;
+                result.tasks.add(entry);
                 taskPackages.add(task.packageName);
             }
 
@@ -236,6 +298,23 @@ public class HistorySearcher extends Searcher {
             lastFetchUptimeMs = SystemClock.uptimeMillis();
             return result;
         }
+    }
+
+    private static AppPojo createTaskPojo(MainActivity activity, RecentTasks.Task task) {
+        String id = "task://" + task.taskId + "/" + task.packageName + "/" + task.activityName;
+        String label = (task.label != null && !task.label.isEmpty()) ? task.label : null;
+        if (label == null) {
+            label = PackageManagerUtils.getLabel(activity, new ComponentName(task.packageName, task.activityName), UserHandle.OWNER);
+        }
+        if (label == null) {
+            label = PackageManagerUtils.getLabel(activity, task.packageName, UserHandle.OWNER);
+        }
+        if (label == null || label.isEmpty()) {
+            label = task.packageName;
+        }
+        AppPojo pojo = new AppPojo(id, task.packageName, task.activityName, UserHandle.OWNER, false, true);
+        pojo.setName(label);
+        return pojo;
     }
 
     private static long getRssKb(Map<String, Long> rssKbByPackage, String packageName) {

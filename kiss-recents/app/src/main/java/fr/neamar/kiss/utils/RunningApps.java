@@ -40,9 +40,20 @@ public final class RunningApps {
     }
 
     /**
-     * Run the commands as root. The snapshot is empty if root is unavailable.
+     * Fetch recent tasks (via the Xposed Recents Binder bridge when available, falling back to root
+     * {@code dumpsys activity recents}) and process RSS memory when root mode is active.
      */
     public static Snapshot fetch(RootHandler rootHandler) {
+        List<RecentTasks.Task> bridgeTasks = RecentsBridgeClient.getRecentTasks(64, 0);
+        if (bridgeTasks != null) {
+            Map<String, Long> rssKbByPackage = rootHandler.isRootActivated()
+                    ? parseProcesses(rootHandler.runRootCommand("ps -A -o RSS,NAME"))
+                    : Collections.emptyMap();
+            return new Snapshot(bridgeTasks, rssKbByPackage);
+        }
+        if (!rootHandler.isRootActivated()) {
+            return new Snapshot(Collections.emptyList(), Collections.emptyMap());
+        }
         return parse(rootHandler.runRootCommand("dumpsys activity recents; echo " + SEPARATOR + "; ps -A -o RSS,NAME"));
     }
 

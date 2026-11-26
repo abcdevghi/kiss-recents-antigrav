@@ -32,6 +32,7 @@ import fr.neamar.kiss.ui.AnimatedListView;
 import fr.neamar.kiss.ui.ListPopup;
 import fr.neamar.kiss.ui.SwipeToDismiss;
 import fr.neamar.kiss.utils.Log;
+import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.SystemBars;
 import fr.neamar.kiss.utils.Utilities;
 
@@ -47,7 +48,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     /** Put by the LSPosed hook on the intent it opens this screen with when the recents button is pressed */
     public static final String EXTRA_RECENTS_PRESSED = "fr.neamar.kiss.RECENTS_PRESSED";
-    /** A press of recents this soon after the previous one is a double press, even if the screen is not shown yet */
+    public static final String EXTRA_HOOK_SOURCE = "fr.neamar.kiss.HOOK_SOURCE";
+    /** Minimum gap between two human taps; anything faster is a duplicate hook callback. */
+    private static final long DUPLICATE_BOUNCE_WINDOW_MS = 150;
+    /** Cross-process duplicate window when SystemUI and One UI Home both report a single physical press. */
+    private static final long CROSS_SOURCE_DEDUPE_WINDOW_MS = 250;
+    /** A second press of recents within this window while Recents is open switches to the previous app. */
     private static final long DOUBLE_PRESS_WINDOW_MS = 1500;
     private static final long CACHED_TASKS_MAX_AGE_MS = 2500;
 
@@ -66,6 +72,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private SwipeToDismiss swipeToDismiss;
     private boolean started;
     private long lastRecentsPress;
+    private long sessionStartUptimeMs;
+    @Nullable
+    private String lastHookSource;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -115,7 +124,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         swipeToDismiss = new SwipeToDismiss(list, adapter, new SwipeToDismiss.Callback() {
             @Override
             public boolean canDismiss(Result<?> result) {
-                return result instanceof AppResult && isRootActivated();
+                return result instanceof AppResult && canControlRecents();
             }
 
             @Override
@@ -155,13 +164,18 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         // Right button: clear all recents
         clearButton.setOnClickListener(v -> clearAllRecents());
 
-        handleRecentsPress(getIntent(), true);
+        Intent launchIntent = getIntent();
+        RecentsBridgeClient.attachFromIntent(launchIntent);
+        handleRecentsPress(launchIntent, true);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         started = true;
+        if (sessionStartUptimeMs == 0L) {
+            sessionStartUptimeMs = SystemClock.uptimeMillis();
+        }
     }
 
     @Override
@@ -188,28 +202,57 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     protected void onStop() {
         super.onStop();
         started = false;
+        resetRecentsPressState();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        RecentsBridgeClient.attachFromIntent(intent);
         handleRecentsPress(intent, false);
     }
 
+    private void resetRecentsPressState() {
+        lastRecentsPress = 0L;
+        lastHookSource = null;
+        sessionStartUptimeMs = 0L;
+    }
+
     /**
-     * The LSPosed hook opens this screen each time the recents button is pressed. A press while the screen is
-     * already showing (or about to) is a double press: go to the app used before the last one,
-     * as double-tapping recents does in Android.
-     * Uses {@link #started} instead of resumed because singleTask delivery triggers onPause() before onNewIntent().
+     * Single tap opens KISS Recents; a second intentional tap within {@link #DOUBLE_PRESS_WINDOW_MS}
+     * while Recents is open jumps to the previous app. Filters out duplicate callbacks fired for
+     * one physical press across SystemUI and One UI Home.
      */
     private void handleRecentsPress(@Nullable Intent intent, boolean created) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_RECENTS_PRESSED, false)) {
             return;
         }
+        intent.removeExtra(EXTRA_RECENTS_PRESSED);
+
+        String hookSource = intent.getStringExtra(EXTRA_HOOK_SOURCE);
         long now = SystemClock.uptimeMillis();
-        boolean doublePress = !created && (started || now - lastRecentsPress < DOUBLE_PRESS_WINDOW_MS);
+
+        if (created || !started) {
+            sessionStartUptimeMs = now;
+            lastRecentsPress = now;
+            lastHookSource = hookSource;
+            return;
+        }
+
+        long delta = now - lastRecentsPress;
+        if (delta < DUPLICATE_BOUNCE_WINDOW_MS) {
+            return;
+        }
+        if (hookSource != null && lastHookSource != null
+                && !hookSource.equals(lastHookSource)
+                && delta < CROSS_SOURCE_DEDUPE_WINDOW_MS) {
+            return;
+        }
+
+        boolean doublePress = delta < DOUBLE_PRESS_WINDOW_MS;
         lastRecentsPress = now;
+        lastHookSource = hookSource;
         if (doublePress) {
             switchToPreviousApp();
         }
@@ -220,10 +263,10 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
      * With a single open app, that app.
      */
     private void switchToPreviousApp() {
-        if (!isRootActivated()) {
+        if (!canControlRecents()) {
             return;
         }
-        List<AppPojo> cached = HistorySearcher.getRecentCachedTasks(CACHED_TASKS_MAX_AGE_MS);
+        List<AppPojo> cached = HistorySearcher.getRecentCachedTasks(CACHED_TASKS_MAX_AGE_MS, sessionStartUptimeMs);
         if (!cached.isEmpty()) {
             launchTask(cached.get(Math.min(1, cached.size() - 1)));
             return;
@@ -243,7 +286,11 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void launchTask(AppPojo target) {
+        resetRecentsPressState();
         HistorySearcher.clearDismissed(target.packageName);
+        if (target.taskId > 0) {
+            HistorySearcher.clearDismissedTask(target.taskId);
+        }
         Result.fromPojo(this, target).launch(this, null, this);
     }
 
@@ -272,6 +319,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void goHome() {
+        resetRecentsPressState();
         Intent home = new Intent(Intent.ACTION_MAIN);
         home.addCategory(Intent.CATEGORY_HOME);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -282,31 +330,53 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         return KissApplication.getApplication(this).getRootHandler().isRootActivated();
     }
 
+    private boolean canControlRecents() {
+        return isRootActivated() || RecentsBridgeClient.isAvailable();
+    }
+
     /**
-     * Slide every row out, then stop all the apps listed.
+     * Slide every row out, then remove their tasks / stop the apps listed.
      */
     private void clearAllRecents() {
-        if (isRootActivated()) {
+        if (canControlRecents()) {
             swipeToDismiss.dismissAll();
         }
     }
 
     /**
-     * Stop the apps of these results in a single batch root shell call.
+     * Remove system tasks by taskId via the Recents bridge and force-stop eligible apps in a single batch shell call.
      */
     private void stopApps(List<Result<?>> results) {
-        final List<String> packages = new ArrayList<>();
+        final List<Integer> taskIds = new ArrayList<>();
+        final List<String> forceStopPackages = new ArrayList<>();
         for (Result<?> result : results) {
             if (result instanceof AppResult) {
-                packages.add(((AppResult) result).getPackageName());
+                AppPojo app = ((AppResult) result).getPojo();
+                if (app.taskId > 0) {
+                    taskIds.add(app.taskId);
+                }
+                if (!app.isTaskOnly && !AppResult.isProtectedSystemPackage(app.packageName)) {
+                    forceStopPackages.add(app.packageName);
+                }
             }
         }
-        if (packages.isEmpty()) {
+        if (taskIds.isEmpty() && forceStopPackages.isEmpty()) {
             return;
         }
-        HistorySearcher.markDismissed(packages);
+        HistorySearcher.markDismissedTasks(taskIds);
+        if (!forceStopPackages.isEmpty()) {
+            HistorySearcher.markDismissed(forceStopPackages);
+        }
         final RootHandler rootHandler = KissApplication.getApplication(this).getRootHandler();
-        Utilities.getDefaultExecutor().execute(() -> rootHandler.hibernateApps(packages));
+        final boolean rootActive = rootHandler.isRootActivated();
+        Utilities.getDefaultExecutor().execute(() -> {
+            for (Integer taskId : taskIds) {
+                RecentsBridgeClient.removeTask(taskId);
+            }
+            if (rootActive && !forceStopPackages.isEmpty()) {
+                rootHandler.hibernateApps(forceStopPackages);
+            }
+        });
     }
 
     public void updateSearchRecords() {
@@ -387,7 +457,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     @Override
     public void launchOccurred() {
-        // Nothing to clean up: there is no search text
+        resetRecentsPressState();
     }
 
     @Override

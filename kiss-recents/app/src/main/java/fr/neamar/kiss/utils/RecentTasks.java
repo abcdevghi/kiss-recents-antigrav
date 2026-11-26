@@ -1,5 +1,7 @@
 package fr.neamar.kiss.utils;
 
+import androidx.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -30,12 +32,24 @@ public final class RecentTasks {
         public final int userId;
         public final String packageName;
         public final String activityName;
+        @Nullable
+        public final String label;
+        public final long lastActiveTime;
+        public final boolean hasTaskIcon;
 
-        Task(int taskId, int userId, String packageName, String activityName) {
+        public Task(int taskId, int userId, String packageName, String activityName) {
+            this(taskId, userId, packageName, activityName, null, 0L, false);
+        }
+
+        public Task(int taskId, int userId, String packageName, String activityName,
+                    @Nullable String label, long lastActiveTime, boolean hasTaskIcon) {
             this.taskId = taskId;
             this.userId = userId;
             this.packageName = packageName;
             this.activityName = activityName;
+            this.label = label;
+            this.lastActiveTime = lastActiveTime;
+            this.hasTaskIcon = hasTaskIcon;
         }
     }
 

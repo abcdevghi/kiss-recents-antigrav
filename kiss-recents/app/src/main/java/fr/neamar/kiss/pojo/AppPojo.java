@@ -25,9 +25,17 @@ public final class AppPojo extends PojoWithTags {
      */
     private boolean excludedShortcuts;
     private final boolean disabled;
+    public final boolean isTaskOnly;
+    public volatile int taskId = -1;
+    public volatile boolean hasTaskIcon = false;
 
     public AppPojo(String id, @NonNull String packageName, @NonNull String activityName, @NonNull UserHandle userHandle,
                    boolean disabled) {
+        this(id, packageName, activityName, userHandle, disabled, false);
+    }
+
+    public AppPojo(String id, @NonNull String packageName, @NonNull String activityName, @NonNull UserHandle userHandle,
+                   boolean disabled, boolean isTaskOnly) {
         super(id);
 
         this.packageName = packageName;
@@ -35,6 +43,7 @@ public final class AppPojo extends PojoWithTags {
         this.userHandle = userHandle;
 
         this.disabled = disabled;
+        this.isTaskOnly = isTaskOnly;
         this.componentName = new ComponentName(packageName, activityName);
     }
 

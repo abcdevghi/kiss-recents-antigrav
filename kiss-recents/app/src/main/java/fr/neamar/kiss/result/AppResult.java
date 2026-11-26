@@ -10,11 +10,15 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.LauncherApps;
+import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.UserManager;
 import android.view.Menu;
 import android.view.View;
@@ -33,12 +37,16 @@ import androidx.core.content.ContextCompat;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 import fr.neamar.kiss.DataHandler;
 import fr.neamar.kiss.IconsHandler;
 import fr.neamar.kiss.KeepAlive;
 import fr.neamar.kiss.KissApplication;
+import fr.neamar.kiss.MainActivity;
 import fr.neamar.kiss.R;
 import fr.neamar.kiss.UIColors;
 import fr.neamar.kiss.adapter.RecordAdapter;
@@ -49,11 +57,16 @@ import fr.neamar.kiss.ui.ListPopup;
 import fr.neamar.kiss.utils.DrawableUtils;
 import fr.neamar.kiss.utils.Log;
 import fr.neamar.kiss.utils.PackageManagerUtils;
+import fr.neamar.kiss.utils.RecentsBridgeClient;
+import fr.neamar.kiss.utils.Utilities;
 import fr.neamar.kiss.utils.fuzzy.FuzzyScore;
 
 public class AppResult extends ResultWithTags<AppPojo> {
 
     private static final String TAG = AppResult.class.getSimpleName();
+    private static final Set<String> PROTECTED_SYSTEM_PACKAGES = Collections.unmodifiableSet(new HashSet<>(
+            Arrays.asList("android", "com.android.systemui", "com.android.settings", "com.android.shell")
+    ));
     private volatile Drawable icon = null;
 
     public String getPackageName() {
@@ -111,40 +124,51 @@ public class AppResult extends ResultWithTags<AppPojo> {
         return pojo.getPackageKey();
     }
 
+    public static boolean isProtectedSystemPackage(String packageName) {
+        return PROTECTED_SYSTEM_PACKAGES.contains(packageName);
+    }
+
     @Override
     protected void buildPopupMenu(Context context, ArrayAdapter<ListPopup.Item> adapter) {
         super.buildPopupMenu(context, adapter);
 
-        adapter.add(new ListPopup.Item(context, R.string.menu_exclude));
-        adapter.add(new ListPopup.Item(context, R.string.menu_app_rename));
-        if (!pojo.isDisabled()) {
-            adapter.add(new ListPopup.Item(context, R.string.menu_app_details));
-        }
-        adapter.add(new ListPopup.Item(context, R.string.menu_app_store));
+        if (!pojo.isTaskOnly) {
+            adapter.add(new ListPopup.Item(context, R.string.menu_exclude));
+            adapter.add(new ListPopup.Item(context, R.string.menu_app_rename));
+            if (!pojo.isDisabled()) {
+                adapter.add(new ListPopup.Item(context, R.string.menu_app_details));
+            }
+            adapter.add(new ListPopup.Item(context, R.string.menu_app_store));
 
-        boolean uninstallDisabled = pojo.isDisabled();
-        if (!uninstallDisabled) {
-            // app installed under /system can't be uninstalled
-            ApplicationInfo ai = PackageManagerUtils.getApplicationInfo(context, this.pojo.packageName, this.pojo.userHandle);
-            // Need to AND the flags with SYSTEM:
-            uninstallDisabled = ai != null && (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+            boolean uninstallDisabled = pojo.isDisabled();
+            if (!uninstallDisabled) {
+                // app installed under /system can't be uninstalled
+                ApplicationInfo ai = PackageManagerUtils.getApplicationInfo(context, this.pojo.packageName, this.pojo.userHandle);
+                // Need to AND the flags with SYSTEM:
+                uninstallDisabled = ai != null && (ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+            }
+
+            if (!uninstallDisabled) {
+                UserManager userManager = ContextCompat.getSystemService(context, UserManager.class);
+                if (userManager != null) {
+                    Bundle restrictions = userManager.getUserRestrictions(pojo.userHandle.getRealHandle());
+                    uninstallDisabled = restrictions.getBoolean(UserManager.DISALLOW_APPS_CONTROL, false)
+                            || restrictions.getBoolean(UserManager.DISALLOW_UNINSTALL_APPS, false);
+                }
+            }
+
+            if (!uninstallDisabled) {
+                adapter.add(new ListPopup.Item(context, R.string.menu_app_uninstall));
+            }
         }
 
-        if (!uninstallDisabled) {
-            UserManager userManager = ContextCompat.getSystemService(context, UserManager.class);
-            Bundle restrictions = userManager.getUserRestrictions(pojo.userHandle.getRealHandle());
-            uninstallDisabled = restrictions.getBoolean(UserManager.DISALLOW_APPS_CONTROL, false)
-                    || restrictions.getBoolean(UserManager.DISALLOW_UNINSTALL_APPS, false);
-        }
-
-        if (!uninstallDisabled) {
-            adapter.add(new ListPopup.Item(context, R.string.menu_app_uninstall));
-        }
-
-        // append root menu if available
-        if (KissApplication.getApplication(context).getRootHandler().isRootActivated()) {
+        // Append task removal / root menu if available
+        boolean rootActivated = KissApplication.getApplication(context).getRootHandler().isRootActivated();
+        if (rootActivated && !pojo.isTaskOnly) {
             adapter.add(new ListPopup.Item(context, KeepAlive.isKept(context, pojo.packageName)
                     ? R.string.menu_keep_alive_off : R.string.menu_keep_alive));
+        }
+        if (rootActivated || (pojo.taskId > 0 && RecentsBridgeClient.isAvailable())) {
             adapter.add(new ListPopup.Item(context, R.string.menu_app_hibernate));
         }
     }
@@ -282,15 +306,38 @@ public class AppResult extends ResultWithTags<AppPojo> {
     }
 
     private void hibernate(Context context) {
-        String msg = context.getResources().getString(R.string.toast_hibernate_completed);
-        if (!KissApplication.getApplication(context).getRootHandler().hibernateApp(pojo.packageName)) {
-            msg = context.getResources().getString(R.string.toast_hibernate_error);
-        } else {
-            HistorySearcher.markDismissed(Collections.singletonList(pojo.packageName));
-            KissApplication.getApplication(context).getDataHandler().reload(APPS);
+        final Context appContext = context.getApplicationContext();
+        final int taskId = pojo.taskId;
+        final String packageName = pojo.packageName;
+        final boolean forceStopEligible = !pojo.isTaskOnly && !isProtectedSystemPackage(packageName);
+
+        if (taskId > 0) {
+            HistorySearcher.markDismissedTasks(Collections.singletonList(taskId));
+        }
+        if (forceStopEligible) {
+            HistorySearcher.markDismissed(Collections.singletonList(packageName));
         }
 
-        Toast.makeText(context, String.format(msg, pojo.getName()), Toast.LENGTH_SHORT).show();
+        Utilities.getDefaultExecutor().execute(() -> {
+            boolean removed = taskId > 0 && RecentsBridgeClient.removeTask(taskId);
+            boolean stopped = false;
+            if (forceStopEligible && KissApplication.getApplication(appContext).getRootHandler().isRootActivated()) {
+                stopped = KissApplication.getApplication(appContext).getRootHandler().hibernateApp(packageName);
+            }
+            final boolean ok = removed || stopped;
+            new Handler(Looper.getMainLooper()).post(() -> {
+                String msg = appContext.getResources().getString(
+                        ok ? R.string.toast_hibernate_completed : R.string.toast_hibernate_error);
+                if (ok) {
+                    if (context instanceof MainActivity) {
+                        ((MainActivity) context).updateSearchRecords();
+                    } else {
+                        KissApplication.getApplication(appContext).getDataHandler().reload(APPS);
+                    }
+                }
+                Toast.makeText(appContext, String.format(msg, pojo.getName()), Toast.LENGTH_SHORT).show();
+            });
+        });
     }
 
     /**
@@ -318,8 +365,20 @@ public class AppResult extends ResultWithTags<AppPojo> {
         if (icon == null) {
             synchronized (this) {
                 if (icon == null) {
-                    IconsHandler iconsHandler = KissApplication.getApplication(context).getIconsHandler();
-                    icon = iconsHandler.getDrawableIconForPackage(context, getClassName(), this.pojo.userHandle);
+                    if (pojo.isTaskOnly) {
+                        if (pojo.hasTaskIcon && pojo.taskId > 0) {
+                            Bitmap bmp = RecentsBridgeClient.getTaskIcon(pojo.taskId);
+                            if (bmp != null) {
+                                icon = DrawableUtils.getThemedDrawable(context, new BitmapDrawable(context.getResources(), bmp));
+                            }
+                        }
+                        if (icon == null) {
+                            icon = PackageManagerUtils.getActivityIcon(context, getClassName(), pojo.userHandle);
+                        }
+                    } else {
+                        IconsHandler iconsHandler = KissApplication.getApplication(context).getIconsHandler();
+                        icon = iconsHandler.getDrawableIconForPackage(context, getClassName(), this.pojo.userHandle);
+                    }
                 }
             }
         }
@@ -328,14 +387,20 @@ public class AppResult extends ResultWithTags<AppPojo> {
     }
 
     @Override
+    protected boolean canAddToHistory() {
+        return super.canAddToHistory() && !pojo.isTaskOnly;
+    }
+
+    @Override
     public void doLaunch(Context context, @Nullable View v) {
         try {
             HistorySearcher.clearDismissed(pojo.packageName);
-            LauncherApps launcher = ContextCompat.getSystemService(context, LauncherApps.class);
-            assert launcher != null;
+            if (pojo.taskId > 0) {
+                HistorySearcher.clearDismissedTask(pojo.taskId);
+            }
+
             Rect sourceBounds = null;
             Bundle opts = null;
-
             if (v != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 // We're on a modern Android and can display activity animations
                 // If AppResult, find the icon
@@ -353,11 +418,54 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 }
             }
 
-            launcher.startMainActivity(getClassName(), pojo.userHandle.getRealHandle(), sourceBounds, opts);
+            // 1. Prefer resuming the live task directly by taskId via the Recents Binder bridge.
+            // This handles parasitic root apps (e.g. LSPosed) and non-launcher activities natively.
+            if (pojo.taskId > 0 && RecentsBridgeClient.isAvailable()) {
+                if (RecentsBridgeClient.startTask(pojo.taskId, opts)) {
+                    return;
+                }
+            }
+
+            // 2. Standard launcher activity launch
+            if (!pojo.isTaskOnly) {
+                LauncherApps launcher = ContextCompat.getSystemService(context, LauncherApps.class);
+                if (launcher != null) {
+                    try {
+                        launcher.startMainActivity(getClassName(), pojo.userHandle.getRealHandle(), sourceBounds, opts);
+                        return;
+                    } catch (ActivityNotFoundException | SecurityException e) {
+                        Log.w(TAG, "startMainActivity failed, falling back to component/package intent", e);
+                    }
+                }
+            }
+
+            // 3. Explicit component or package launch intent fallback
+            Intent componentIntent = new Intent(Intent.ACTION_MAIN);
+            componentIntent.setComponent(getClassName());
+            componentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            if (sourceBounds != null) {
+                componentIntent.setSourceBounds(sourceBounds);
+            }
+            try {
+                context.startActivity(componentIntent, opts);
+                return;
+            } catch (ActivityNotFoundException | SecurityException e) {
+                Log.w(TAG, "Explicit component launch failed, trying package launch intent", e);
+            }
+
+            Intent pkgIntent = context.getPackageManager().getLaunchIntentForPackage(pojo.packageName);
+            if (pkgIntent != null) {
+                pkgIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (sourceBounds != null) {
+                    pkgIntent.setSourceBounds(sourceBounds);
+                }
+                context.startActivity(pkgIntent, opts);
+                return;
+            }
+
+            Toast.makeText(context, R.string.application_not_found, Toast.LENGTH_LONG).show();
         } catch (ActivityNotFoundException | NullPointerException | SecurityException e) {
             Log.w(TAG, "Unable to launch activity", e);
-            // Application was just removed?
-            // (null pointer exception can be thrown on Lollipop+ when app is missing)
             Toast.makeText(context, R.string.application_not_found, Toast.LENGTH_LONG).show();
         }
     }
@@ -384,16 +492,16 @@ public class AppResult extends ResultWithTags<AppPojo> {
 
     @Override
     protected boolean isAllowedAsFavorite() {
-        return true;
+        return !pojo.isTaskOnly;
     }
 
     @Override
     protected boolean canRemoveFromHistory(Context context) {
-        return true;
+        return !pojo.isTaskOnly;
     }
 
     @Override
     protected boolean canHaveCustomIcon(Context context, IconPack iconPack) {
-        return true;
+        return !pojo.isTaskOnly;
     }
 }
