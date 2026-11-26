@@ -114,6 +114,7 @@ public class RecentsCarouselView extends FrameLayout {
 
     private int selectedAdapterPos = -1;
     private int prevSelectedAdapterPos = -1;
+    private int bannerBoundAdapterPos = -1;
     private String selectedPojoId;
 
     private float scrollItemPos = 0f;
@@ -324,6 +325,7 @@ public class RecentsCarouselView extends FrameLayout {
         selectedPojoId = null;
         selectedAdapterPos = -1;
         prevSelectedAdapterPos = -1;
+        bannerBoundAdapterPos = -1;
         contextMenuProgress = 0f;
         contextMenuLayer.setVisibility(View.GONE);
     }
@@ -458,6 +460,7 @@ public class RecentsCarouselView extends FrameLayout {
         cancelAnimator(contextAnimator);
         cancelAnimator(swayAnimator);
         cancelAnimator(dismissAnimator);
+        inFlightSnapshots.clear();
         recycleVelocityTracker();
     }
 
@@ -511,6 +514,12 @@ public class RecentsCarouselView extends FrameLayout {
         }
         cancelAnimator(scrollAnimator);
         cancelAnimator(swayAnimator);
+        cancelAnimator(contextAnimator);
+        if (!animatingSingleDismiss) {
+            cancelAnimator(dismissAnimator);
+            dismissingVisualIndex = -1;
+            dismissingDx = 0f;
+        }
 
         downX = event.getX();
         downY = event.getY();
@@ -1142,10 +1151,14 @@ public class RecentsCarouselView extends FrameLayout {
         if (bannerView == null) {
             bannerView = LayoutInflater.from(getContext()).inflate(R.layout.item_app_banner, this, false);
             addView(bannerView);
+            bannerBoundAdapterPos = -1;
         } else if (bannerView.getParent() != this) {
             addView(bannerView);
+            bannerBoundAdapterPos = -1;
         }
-        bindBannerAt(adapterPos);
+        if (bannerBoundAdapterPos != adapterPos) {
+            bindBannerAt(adapterPos);
+        }
         return bannerView;
     }
 
@@ -1159,6 +1172,7 @@ public class RecentsCarouselView extends FrameLayout {
         if (bannerView == null || adapterPos < 0 || adapterPos >= getItemCount()) {
             return;
         }
+        bannerBoundAdapterPos = adapterPos;
         Result<?> result = adapter.getItem(adapterPos);
         if (result instanceof AppResult) {
             AppResult appResult = (AppResult) result;
@@ -1185,6 +1199,7 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private void clearAllItemViews() {
+        bannerBoundAdapterPos = -1;
         if (bannerView != null) {
             bannerView.animate().cancel();
             bannerView.setTranslationX(0f);
@@ -1345,8 +1360,12 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private static void cancelAnimator(@Nullable ValueAnimator animator) {
-        if (animator != null && animator.isRunning()) {
-            animator.cancel();
+        if (animator != null) {
+            animator.removeAllListeners();
+            animator.removeAllUpdateListeners();
+            if (animator.isRunning()) {
+                animator.cancel();
+            }
         }
     }
 }

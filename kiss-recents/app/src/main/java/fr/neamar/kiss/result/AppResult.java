@@ -253,7 +253,7 @@ public class AppResult extends ResultWithTags<AppPojo> {
 
         if (pojo.dominantColor == 0) {
             final String expectedId = pojo.id;
-            Utilities.runAsync(task -> {
+            Utilities.<Integer>runAsync(task -> {
                 if (task.isCancelled()) {
                     return null;
                 }
@@ -266,7 +266,7 @@ public class AppResult extends ResultWithTags<AppPojo> {
                     return;
                 }
                 if (expectedId.equals(bannerView.getTag(BANNER_TAG_KEY))) {
-                    applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, colorObj, hasSnapshot);
+                    applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, colorObj.intValue(), hasSnapshot);
                 }
             });
         }
