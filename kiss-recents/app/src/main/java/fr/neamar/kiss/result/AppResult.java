@@ -203,16 +203,24 @@ public class AppResult extends ResultWithTags<AppPojo> {
      */
     public void displayBanner(@NonNull Context context, @NonNull View bannerView,
                               @Nullable Bitmap snapshot, boolean greyscale) {
+        displayBanner(context, bannerView, snapshot, greyscale, false);
+    }
+
+    public void displayBanner(@NonNull Context context, @NonNull View bannerView,
+                              @Nullable Bitmap snapshot, boolean greyscale, boolean skipHeavyVisuals) {
         final float cornerRadius = context.getResources().getDimension(R.dimen.banner_card_corner_radius);
         final int strokeWidthPx = Math.max(2, DrawableUtils.dpToPx(context, 2.5f));
-        bannerView.setOutlineProvider(new ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerRadius);
-            }
-        });
-        bannerView.setClipToOutline(true);
-        bannerView.setElevation(DrawableUtils.dpToPx(context, 6f));
+        if (!(bannerView.getTag(R.id.banner_outline) instanceof Boolean)) {
+            bannerView.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerRadius);
+                }
+            });
+            bannerView.setClipToOutline(true);
+            bannerView.setElevation(DrawableUtils.dpToPx(context, 6f));
+            bannerView.setTag(R.id.banner_outline, Boolean.TRUE);
+        }
         bannerView.setTag(BANNER_TAG_KEY, pojo.id);
 
         TextView appName = bannerView.findViewById(R.id.banner_app_name);
@@ -230,8 +238,14 @@ public class AppResult extends ResultWithTags<AppPojo> {
         final ImageView fallbackIconView = bannerView.findViewById(R.id.banner_fallback_icon);
         final View outlineView = bannerView.findViewById(R.id.banner_outline);
 
-        final boolean hasSnapshot = snapshot != null && !snapshot.isRecycled();
-        if (hasSnapshot) {
+        final boolean hasSnapshot = !skipHeavyVisuals && snapshot != null && !snapshot.isRecycled();
+        if (skipHeavyVisuals) {
+            snapshotView.setImageDrawable(null);
+            snapshotView.setColorFilter(null);
+            snapshotView.setVisibility(View.GONE);
+            fallbackIconView.setImageDrawable(null);
+            fallbackIconView.setVisibility(View.GONE);
+        } else if (hasSnapshot) {
             snapshotView.setImageBitmap(snapshot);
             snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
             snapshotView.setVisibility(View.VISIBLE);
@@ -251,7 +265,7 @@ public class AppResult extends ResultWithTags<AppPojo> {
         int dominant = getDominantColor(context);
         applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, dominant, hasSnapshot);
 
-        if (pojo.dominantColor == 0) {
+        if (!skipHeavyVisuals && pojo.dominantColor == 0) {
             final String expectedId = pojo.id;
             Utilities.<Integer>runAsync(task -> {
                 if (task.isCancelled()) {

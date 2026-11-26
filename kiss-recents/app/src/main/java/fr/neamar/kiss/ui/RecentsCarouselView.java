@@ -6,6 +6,7 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.SparseArray;
 import android.view.HapticFeedbackConstants;
@@ -74,6 +75,8 @@ public class RecentsCarouselView extends FrameLayout {
     private static final float GRAB_SCALE = 0.90f;
     private static final float DISMISS_THRESHOLD_RATIO = 0.35f;
     private static final int STAGGER_CLEAR_ALL_MS = 35;
+    private static final float FAST_WHEEL_ITEMS_PER_SEC = 5.5f;
+    private static final long THUMBNAIL_STABILIZE_DELAY_MS = 75L;
 
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
     private static final Interpolator DECELERATE = new DecelerateInterpolator(1.6f);
@@ -138,6 +141,8 @@ public class RecentsCarouselView extends FrameLayout {
     private ValueAnimator horizontalAnimator;
     private ValueAnimator swayAnimator;
     private ValueAnimator dismissAnimator;
+    private ValueAnimator bannerExpandAnimator;
+    private ValueAnimator shrinkAnimator;
 
     private DragMode dragMode = DragMode.NONE;
     private float downX;
@@ -150,40 +155,21 @@ public class RecentsCarouselView extends FrameLayout {
     private VelocityTracker velocityTracker;
     private Runnable pendingNotTouchedAction;
 
-    private float[] yCenterScratch = new float[0];
-    private float[] heightScratch = new float[0];
-    private float[] focusWeights = new float[0];
-    private boolean focusTickScheduled = false;
+    private int shrinkingAdapterPos = -1;
+    private float shrinkProgress = 1f;
+    private float bannerExpandProgress = 1f;
 
     private int flingTargetVisualIdx = -1;
     private boolean suppressContextMenuOnHorizontalSnap = false;
+    private float wheelSpeedItemsPerSec = 0f;
+    private long lastVelSampleTimeMs = 0L;
+    private boolean thumbnailsSuppressed = false;
+    private boolean bannerBoundLightweight = false;
 
-    private final Runnable focusTick = new Runnable() {
+    private final Runnable stabilizeThumbnailsRunnable = new Runnable() {
         @Override
         public void run() {
-            focusTickScheduled = false;
-            int count = getItemCount();
-            if (count == 0) {
-                return;
-            }
-            ensureScratchCapacity(count);
-            int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
-            boolean anyMoving = false;
-            for (int v = 0; v < count; v++) {
-                float target = (v == selectedVisualIdx) ? 1f : 0f;
-                float diff = target - focusWeights[v];
-                if (Math.abs(diff) > 0.005f) {
-                    focusWeights[v] += diff * 0.36f;
-                    anyMoving = true;
-                } else {
-                    focusWeights[v] = target;
-                }
-            }
-            layoutCarousel();
-            if (anyMoving) {
-                focusTickScheduled = true;
-                postOnAnimation(this);
-            }
+            onWheelStabilized();
         }
     };
 
@@ -195,6 +181,8 @@ public class RecentsCarouselView extends FrameLayout {
                 scrollItemPos = scrollScroller.getCurrY() / 1000f;
                 float vel = (scrollItemPos - oldPos) * 60f;
                 scrollSwayPx = clamp(vel * DrawableUtils.dpToPx(getContext(), 6f), -maxScrollSwayPx, maxScrollSwayPx);
+                updateWheelSpeed(oldPos, scrollItemPos);
+                thumbnailsSuppressed = isWheelMovingFast();
                 updateAutoSelectionFromScroll(true);
 
                 int targetIdx = flingTargetVisualIdx;
@@ -381,6 +369,15 @@ public class RecentsCarouselView extends FrameLayout {
         selectedPojoId = null;
         selectedAdapterPos = -1;
         bannerBoundAdapterPos = -1;
+        shrinkingAdapterPos = -1;
+        shrinkProgress = 1f;
+        bannerExpandProgress = 1f;
+        wheelSpeedItemsPerSec = 0f;
+        thumbnailsSuppressed = false;
+        bannerBoundLightweight = false;
+        removeCallbacks(stabilizeThumbnailsRunnable);
+        cancelAnimator(bannerExpandAnimator);
+        cancelAnimator(shrinkAnimator);
         horizontalSwipePx = 0f;
         contextMenuProgress = 0f;
         dismissingVisualIndex = -1;
@@ -389,6 +386,15 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     public void onDatasetChanged(boolean resetScrollIfFresh) {
+        removeCallbacks(stabilizeThumbnailsRunnable);
+        cancelAnimator(bannerExpandAnimator);
+        cancelAnimator(shrinkAnimator);
+        shrinkingAdapterPos = -1;
+        shrinkProgress = 1f;
+        bannerExpandProgress = 1f;
+        wheelSpeedItemsPerSec = 0f;
+        thumbnailsSuppressed = false;
+
         int count = getItemCount();
         if (count == 0) {
             selectedAdapterPos = -1;
@@ -419,11 +425,10 @@ public class RecentsCarouselView extends FrameLayout {
             scrollItemPos = clamp(scrollItemPos, 0f, count - 1);
         }
         selectedAdapterPos = resolvedPos;
-        snapFocusWeightsTo(adapterToVisualPos(selectedAdapterPos));
 
         clearAllItemViews();
         layoutCarousel();
-        requestSnapshotsAroundSelection();
+        requestSnapshotsAroundSelection(true);
     }
 
     public void refreshAllBoundItems() {
@@ -535,14 +540,15 @@ public class RecentsCarouselView extends FrameLayout {
         super.onDetachedFromWindow();
         pendingNotTouchedAction = null;
         removeCallbacks(flingTick);
-        removeCallbacks(focusTick);
-        focusTickScheduled = false;
+        removeCallbacks(stabilizeThumbnailsRunnable);
         removeCallbacks(longPressRunnable);
         cancelAnimator(scrollAnimator);
         cancelAnimator(grabAnimator);
         cancelAnimator(horizontalAnimator);
         cancelAnimator(swayAnimator);
         cancelAnimator(dismissAnimator);
+        cancelAnimator(bannerExpandAnimator);
+        cancelAnimator(shrinkAnimator);
         inFlightSnapshots.clear();
         recycleVelocityTracker();
     }
@@ -591,6 +597,7 @@ public class RecentsCarouselView extends FrameLayout {
 
     private void handleActionDown(MotionEvent event) {
         removeCallbacks(flingTick);
+        removeCallbacks(stabilizeThumbnailsRunnable);
         removeCallbacks(longPressRunnable);
         if (!scrollScroller.isFinished()) {
             scrollScroller.abortAnimation();
@@ -612,6 +619,9 @@ public class RecentsCarouselView extends FrameLayout {
         dismissHapticFired = false;
         flingTargetVisualIdx = -1;
         suppressContextMenuOnHorizontalSnap = false;
+        wheelSpeedItemsPerSec = 0f;
+        lastVelSampleTimeMs = SystemClock.uptimeMillis();
+        thumbnailsSuppressed = false;
         swipeStartX = downX;
         swipeStartOffsetPx = horizontalSwipePx;
 
@@ -687,8 +697,12 @@ public class RecentsCarouselView extends FrameLayout {
             if ((scrollItemPos < 0f && deltaItems < 0f) || (scrollItemPos > maxIdx && deltaItems > 0f)) {
                 deltaItems *= 0.40f;
             }
+            float oldPos = scrollItemPos;
             scrollItemPos = clamp(scrollItemPos + deltaItems, -0.45f, maxIdx + 0.45f);
             scrollSwayPx = clamp(-stepDy * 0.35f, -maxScrollSwayPx, maxScrollSwayPx);
+            updateWheelSpeed(oldPos, scrollItemPos);
+            thumbnailsSuppressed = isWheelMovingFast();
+            scheduleThumbnailStabilize();
             updateAutoSelectionFromScroll(true);
             layoutCarousel();
         } else if (dragMode == DragMode.SWIPE_CONTEXT || dragMode == DragMode.SWIPE_DISMISS) {
@@ -880,15 +894,15 @@ public class RecentsCarouselView extends FrameLayout {
             return;
         }
 
+        int previousPos = selectedAdapterPos;
         selectedAdapterPos = adapterPos;
         bannerBoundAdapterPos = -1;
         selectedPojoId = adapter.getItem(adapterPos).getPojoId();
 
         if (animate) {
-            startFocusWeightAnimation();
+            startTransitionAnimations(previousPos);
             snapScrollTo(targetVisual, true, false);
         } else {
-            snapFocusWeightsTo(targetVisual);
             scrollItemPos = targetVisual;
             layoutCarousel();
         }
@@ -896,7 +910,9 @@ public class RecentsCarouselView extends FrameLayout {
         if (isContextMenuOpen()) {
             bindContextButtons();
         }
-        requestSnapshotsAroundSelection();
+        if (!thumbnailsSuppressed) {
+            requestSnapshotsAroundSelection(!animate);
+        }
     }
 
     private void updateAutoSelectionFromScroll(boolean playHaptic) {
@@ -907,32 +923,94 @@ public class RecentsCarouselView extends FrameLayout {
         int centerVisual = Math.round(clamp(scrollItemPos, 0f, count - 1));
         int centerAdapterPos = visualToAdapterPos(centerVisual);
         if (centerAdapterPos >= 0 && centerAdapterPos != selectedAdapterPos) {
+            int previousPos = selectedAdapterPos;
             selectedAdapterPos = centerAdapterPos;
             bannerBoundAdapterPos = -1;
             selectedPojoId = adapter.getItem(centerAdapterPos).getPojoId();
             if (playHaptic) {
                 performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
             }
-            startFocusWeightAnimation();
+            startTransitionAnimations(previousPos);
             if (isContextMenuOpen()) {
                 bindContextButtons();
             }
-            requestSnapshotsAroundSelection();
+            if (!thumbnailsSuppressed) {
+                requestSnapshotsAroundSelection(false);
+            }
         }
     }
 
-    private void startFocusWeightAnimation() {
-        if (!focusTickScheduled) {
-            focusTickScheduled = true;
-            postOnAnimation(focusTick);
+    private void startTransitionAnimations(int previousAdapterPos) {
+        if (previousAdapterPos >= 0 && previousAdapterPos != selectedAdapterPos) {
+            shrinkingAdapterPos = previousAdapterPos;
+            cancelAnimator(shrinkAnimator);
+            shrinkProgress = 0f;
+            shrinkAnimator = ValueAnimator.ofFloat(0f, 1f);
+            shrinkAnimator.setDuration(165);
+            shrinkAnimator.setInterpolator(DECELERATE);
+            shrinkAnimator.addUpdateListener(anim -> {
+                shrinkProgress = (float) anim.getAnimatedValue();
+                layoutCarousel();
+            });
+            shrinkAnimator.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    shrinkingAdapterPos = -1;
+                    shrinkProgress = 1f;
+                    layoutCarousel();
+                }
+            });
+            shrinkAnimator.start();
         }
+
+        cancelAnimator(bannerExpandAnimator);
+        bannerExpandProgress = 0f;
+        bannerExpandAnimator = ValueAnimator.ofFloat(0f, 1f);
+        bannerExpandAnimator.setDuration(150);
+        bannerExpandAnimator.setInterpolator(DECELERATE);
+        bannerExpandAnimator.addUpdateListener(anim -> {
+            bannerExpandProgress = (float) anim.getAnimatedValue();
+            layoutCarousel();
+        });
+        bannerExpandAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                bannerExpandProgress = 1f;
+                layoutCarousel();
+            }
+        });
+        bannerExpandAnimator.start();
     }
 
-    private void snapFocusWeightsTo(int selectedVisualIdx) {
-        int count = getItemCount();
-        ensureScratchCapacity(count);
-        for (int v = 0; v < count; v++) {
-            focusWeights[v] = (v == selectedVisualIdx) ? 1f : 0f;
+    private void updateWheelSpeed(float prevPos, float newPos) {
+        long now = SystemClock.uptimeMillis();
+        if (lastVelSampleTimeMs > 0L) {
+            long dtMs = Math.max(8L, Math.min(120L, now - lastVelSampleTimeMs));
+            float instSpeed = Math.abs(newPos - prevPos) * (1000f / dtMs);
+            wheelSpeedItemsPerSec = wheelSpeedItemsPerSec * 0.55f + instSpeed * 0.45f;
+        }
+        lastVelSampleTimeMs = now;
+    }
+
+    private boolean isWheelMovingFast() {
+        return flingTargetVisualIdx >= 0 || wheelSpeedItemsPerSec >= FAST_WHEEL_ITEMS_PER_SEC;
+    }
+
+    private void scheduleThumbnailStabilize() {
+        removeCallbacks(stabilizeThumbnailsRunnable);
+        postDelayed(stabilizeThumbnailsRunnable, THUMBNAIL_STABILIZE_DELAY_MS);
+    }
+
+    private void onWheelStabilized() {
+        removeCallbacks(stabilizeThumbnailsRunnable);
+        wheelSpeedItemsPerSec = 0f;
+        thumbnailsSuppressed = false;
+        if (getItemCount() > 0 && selectedAdapterPos >= 0) {
+            if (bannerBoundLightweight) {
+                rebindBanner();
+            }
+            requestSnapshotsAroundSelection(true);
+            layoutCarousel();
         }
     }
 
@@ -951,6 +1029,7 @@ public class RecentsCarouselView extends FrameLayout {
             if (updateAutoSelect) {
                 updateAutoSelectionFromScroll(false);
             }
+            onWheelStabilized();
             layoutCarousel();
             return;
         }
@@ -972,6 +1051,7 @@ public class RecentsCarouselView extends FrameLayout {
                 if (updateAutoSelect) {
                     updateAutoSelectionFromScroll(false);
                 }
+                onWheelStabilized();
                 layoutCarousel();
             }
         });
@@ -1107,35 +1187,16 @@ public class RecentsCarouselView extends FrameLayout {
         int bannerWidth = Math.max(1, width - 2 * bannerHorizontalMarginPx);
         float focalY = height * 0.52f;
         float arcRadius = Math.max(height * 0.95f, DrawableUtils.dpToPx(getContext(), 520f));
+        float stepPx = unfocusedHeightPx + itemGapPx;
+        float extraHalf = Math.max(0f, (bannerHeightPx - unfocusedHeightPx) * 0.5f);
 
-        ensureScratchCapacity(count);
         int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
-
-        for (int v = 0; v < count; v++) {
-            float weight = clamp(focusWeights[v], 0f, 1f);
-            heightScratch[v] = unfocusedHeightPx + (bannerHeightPx - unfocusedHeightPx) * weight;
-        }
-
-        yCenterScratch[0] = 0f;
-        for (int v = 1; v < count; v++) {
-            yCenterScratch[v] = yCenterScratch[v - 1] + (heightScratch[v - 1] + heightScratch[v]) * 0.5f + itemGapPx;
-        }
-
-        float focalVirtualY;
-        if (scrollItemPos <= 0f) {
-            focalVirtualY = yCenterScratch[0] + scrollItemPos * (unfocusedHeightPx + itemGapPx);
-        } else if (scrollItemPos >= count - 1) {
-            focalVirtualY = yCenterScratch[count - 1] + (scrollItemPos - (count - 1)) * (unfocusedHeightPx + itemGapPx);
-        } else {
-            int baseIdx = (int) Math.floor(scrollItemPos);
-            float frac = scrollItemPos - baseIdx;
-            focalVirtualY = yCenterScratch[baseIdx] + (yCenterScratch[baseIdx + 1] - yCenterScratch[baseIdx]) * frac;
-        }
+        int shrinkingVisualIdx = adapterToVisualPos(shrinkingAdapterPos);
 
         // Track off-screen views to detach & recycle cleanly
         for (int i = boundUnfocusedViews.size() - 1; i >= 0; i--) {
             int v = boundUnfocusedViews.keyAt(i);
-            float centerY = focalY + (yCenterScratch[v] - focalVirtualY);
+            float centerY = computeSlotCenterY(v, focalY, stepPx, extraHalf);
             if (v == selectedVisualIdx || centerY < -bannerHeightPx || centerY > height + bannerHeightPx) {
                 View stale = boundUnfocusedViews.valueAt(i);
                 boundUnfocusedViews.removeAt(i);
@@ -1146,7 +1207,7 @@ public class RecentsCarouselView extends FrameLayout {
         float selectedScreenCenterY = focalY;
         float horizontalRubberRange = Math.max(160f, width * 0.75f);
         for (int v = 0; v < count; v++) {
-            float centerY = focalY + (yCenterScratch[v] - focalVirtualY);
+            float centerY = computeSlotCenterY(v, focalY, stepPx, extraHalf);
             boolean isSelected = (v == selectedVisualIdx);
             if (isSelected) {
                 selectedScreenCenterY = centerY;
@@ -1167,7 +1228,7 @@ public class RecentsCarouselView extends FrameLayout {
                 child.setVisibility(View.VISIBLE);
                 childLeft = bannerHorizontalMarginPx;
                 childWidth = bannerWidth;
-                childHeight = Math.max(unfocusedHeightPx, Math.round(heightScratch[v]));
+                childHeight = bannerHeightPx;
             } else {
                 child = obtainAndBindUnfocused(v, visualToAdapterPos(v));
                 childLeft = horizontalMarginPx;
@@ -1226,15 +1287,20 @@ public class RecentsCarouselView extends FrameLayout {
 
             if (isSelected) {
                 float swayTx = scrollSwayPx * 0.45f;
+                float expandScale = 0.88f + 0.12f * clamp(bannerExpandProgress, 0f, 1f);
+                float totalScale = grabScale * expandScale;
                 child.setPivotX(childWidth * 0.5f);
                 child.setPivotY(childHeight * 0.5f);
-                child.setScaleX(grabScale);
-                child.setScaleY(grabScale);
+                child.setScaleX(totalScale);
+                child.setScaleY(totalScale);
                 child.setAlpha(dismissAlpha);
                 child.setTranslationX(horizTx + swayTx);
                 child.setRotation(clamp(scrollSwayPx * 0.06f, -1.2f, 1.2f));
             } else {
                 float scale = Math.max(0.78f, 0.95f - normDist * 0.14f);
+                if (v == shrinkingVisualIdx && shrinkProgress < 1f) {
+                    scale *= (1f + 0.28f * (1f - clamp(shrinkProgress, 0f, 1f)));
+                }
                 float baseAlpha = Math.max(0.55f, 1.0f - normDist * 0.28f);
                 float swayTx = scrollSwayPx * (0.65f + normDist * 0.35f);
                 child.setPivotX(0f);
@@ -1372,7 +1438,7 @@ public class RecentsCarouselView extends FrameLayout {
             attachChild(bannerView, idx);
             bannerBoundAdapterPos = -1;
         }
-        if (bannerBoundAdapterPos != adapterPos) {
+        if (bannerBoundAdapterPos != adapterPos || (bannerBoundLightweight && !thumbnailsSuppressed)) {
             bindBannerAt(adapterPos);
         }
         return bannerView;
@@ -1389,11 +1455,13 @@ public class RecentsCarouselView extends FrameLayout {
             return;
         }
         bannerBoundAdapterPos = adapterPos;
+        boolean skipHeavy = thumbnailsSuppressed;
+        bannerBoundLightweight = skipHeavy;
         Result<?> result = adapter.getItem(adapterPos);
         if (result instanceof AppResult) {
             AppResult appResult = (AppResult) result;
-            Bitmap cachedSnapshot = TaskSnapshotCache.get(appResult.getPojo().taskId);
-            appResult.displayBanner(getContext(), bannerView, cachedSnapshot, greyscaleSnapshots);
+            Bitmap cachedSnapshot = skipHeavy ? null : TaskSnapshotCache.get(appResult.getPojo().taskId);
+            appResult.displayBanner(getContext(), bannerView, cachedSnapshot, greyscaleSnapshots, skipHeavy);
         }
     }
 
@@ -1501,20 +1569,22 @@ public class RecentsCarouselView extends FrameLayout {
         }
     }
 
-    private void requestSnapshotsAroundSelection() {
-        if (!RecentsBridgeClient.isAvailable() || adapter == null) {
+    private void requestSnapshotsAroundSelection(boolean includeNeighbors) {
+        if (!RecentsBridgeClient.isAvailable() || adapter == null || thumbnailsSuppressed) {
             return;
         }
         int count = getItemCount();
         if (selectedAdapterPos < 0 || selectedAdapterPos >= count) {
             return;
         }
-        requestSnapshotForAdapterPos(selectedAdapterPos, true);
-        if (selectedAdapterPos - 1 >= 0) {
-            requestSnapshotForAdapterPos(selectedAdapterPos - 1, false);
-        }
-        if (selectedAdapterPos + 1 < count) {
-            requestSnapshotForAdapterPos(selectedAdapterPos + 1, false);
+        requestSnapshotForAdapterPos(selectedAdapterPos, includeNeighbors);
+        if (includeNeighbors) {
+            if (selectedAdapterPos - 1 >= 0) {
+                requestSnapshotForAdapterPos(selectedAdapterPos - 1, false);
+            }
+            if (selectedAdapterPos + 1 < count) {
+                requestSnapshotForAdapterPos(selectedAdapterPos + 1, false);
+            }
         }
     }
 
@@ -1615,14 +1685,12 @@ public class RecentsCarouselView extends FrameLayout {
         return adapterPos;
     }
 
-    private void ensureScratchCapacity(int count) {
-        if (yCenterScratch.length < count) {
-            yCenterScratch = new float[count];
-            heightScratch = new float[count];
-            float[] nextWeights = new float[count];
-            System.arraycopy(focusWeights, 0, nextWeights, 0, focusWeights.length);
-            focusWeights = nextWeights;
-        }
+    private float computeSlotCenterY(int visualIdx, float focalY, float stepPx, float extraHalf) {
+        float distIdx = visualIdx - scrollItemPos;
+        float t = clamp(Math.abs(distIdx), 0f, 1f);
+        float eased = t * t * (3f - 2f * t);
+        float push = (distIdx >= 0f ? 1f : -1f) * extraHalf * eased;
+        return focalY + distIdx * stepPx + push;
     }
 
     private static float rubberBand(float distance, float range) {
