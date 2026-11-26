@@ -12,6 +12,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -87,6 +88,62 @@ public class RootHandler {
         if (command.length() == 0) {
             return false;
         }
+        return executeRootShell(command.toString());
+    }
+
+    /**
+     * Protect a package marked "Don't clear" against Doze, app standby throttling, background
+     * appops restrictions, and cached-app LMK sweeps.
+     */
+    public boolean protectKeepAlivePackage(String packageName) {
+        if (!isValidPackageName(packageName)) {
+            return false;
+        }
+        String escaped = packageName.replace(".", "\\.");
+        String command = "dumpsys deviceidle whitelist +" + packageName
+                + "; am set-standby-bucket " + packageName + " active"
+                + "; cmd appops set " + packageName + " RUN_IN_BACKGROUND allow"
+                + "; cmd appops set " + packageName + " RUN_ANY_IN_BACKGROUND allow"
+                + "; for p in $(pidof " + packageName + " 2>/dev/null) $(pgrep -f '^" + escaped + ":' 2>/dev/null); do"
+                + " echo 100 > /proc/$p/oom_score_adj 2>/dev/null; done; true";
+        return executeRootShell(command);
+    }
+
+    /**
+     * Restore default system RAM and standby management when "Don't clear" is turned off.
+     */
+    public boolean unprotectKeepAlivePackage(String packageName) {
+        if (!isValidPackageName(packageName)) {
+            return false;
+        }
+        String command = "dumpsys deviceidle whitelist -" + packageName
+                + "; am set-standby-bucket " + packageName + " working_set"
+                + "; cmd appops set " + packageName + " RUN_IN_BACKGROUND default"
+                + "; cmd appops set " + packageName + " RUN_ANY_IN_BACKGROUND default; true";
+        return executeRootShell(command);
+    }
+
+    /**
+     * Clamp oom_score_adj for active processes of kept packages in a single root shell round-trip.
+     */
+    public boolean reinforceKeepAliveOom(Collection<String> packageNames) {
+        if (packageNames == null || packageNames.isEmpty()) {
+            return true;
+        }
+        StringBuilder command = new StringBuilder();
+        for (String packageName : packageNames) {
+            if (!isValidPackageName(packageName)) {
+                continue;
+            }
+            String escaped = packageName.replace(".", "\\.");
+            command.append("for p in $(pidof ").append(packageName)
+                    .append(" 2>/dev/null) $(pgrep -f '^").append(escaped)
+                    .append(":' 2>/dev/null); do echo 100 > /proc/$p/oom_score_adj 2>/dev/null; done; ");
+        }
+        if (command.length() == 0) {
+            return false;
+        }
+        command.append("true");
         return executeRootShell(command.toString());
     }
 

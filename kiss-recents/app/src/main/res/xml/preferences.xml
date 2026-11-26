@@ -10,4 +10,9 @@
         app:key="import-appearance"
         app:summary="@string/import_appearance_summary"
         app:title="@string/import_appearance_title" />
+    <androidx.preference.SwitchPreferenceCompat
+        app:defaultValue="true"
+        app:key="snapshot-greyscale"
+        app:summary="@string/snapshot_greyscale_summary"
+        app:title="@string/snapshot_greyscale_title" />
 </PreferenceScreen>

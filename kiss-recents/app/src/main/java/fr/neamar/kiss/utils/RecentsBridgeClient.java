@@ -2,6 +2,8 @@ package fr.neamar.kiss.utils;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -25,6 +27,10 @@ public final class RecentsBridgeClient {
     private static final int TX_START_TASK = IBinder.FIRST_CALL_TRANSACTION + 1;
     private static final int TX_REMOVE_TASK = IBinder.FIRST_CALL_TRANSACTION + 2;
     private static final int TX_GET_TASK_ICON = IBinder.FIRST_CALL_TRANSACTION + 3;
+
+    private static final int TX_START_TASK_POPUP = IBinder.FIRST_CALL_TRANSACTION + 4;
+    private static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
+    private static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
 
     private static volatile IBinder bridgeBinder;
 
@@ -134,6 +140,76 @@ public final class RecentsBridgeClient {
         }
     }
 
+    public static boolean startTaskPopup(int taskId, @Nullable Rect bounds, @Nullable Bundle options) {
+        IBinder binder = bridgeBinder;
+        if (binder == null || taskId <= 0) {
+            return false;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            data.writeInt(taskId);
+            if (bounds != null) {
+                data.writeInt(1);
+                bounds.writeToParcel(data, 0);
+            } else {
+                data.writeInt(0);
+            }
+            if (options != null) {
+                data.writeInt(1);
+                options.writeToParcel(data, 0);
+            } else {
+                data.writeInt(0);
+            }
+            if (!binder.transact(TX_START_TASK_POPUP, data, reply, 0)) {
+                return false;
+            }
+            reply.readException();
+            return reply.readInt() != 0;
+        } catch (RemoteException e) {
+            bridgeBinder = null;
+            return false;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    public static boolean startTaskSplit(int taskId, @Nullable Bundle options) {
+        IBinder binder = bridgeBinder;
+        if (binder == null || taskId <= 0) {
+            return false;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            data.writeInt(taskId);
+            if (options != null) {
+                data.writeInt(1);
+                options.writeToParcel(data, 0);
+            } else {
+                data.writeInt(0);
+            }
+            if (!binder.transact(TX_START_TASK_SPLIT, data, reply, 0)) {
+                return false;
+            }
+            reply.readException();
+            return reply.readInt() != 0;
+        } catch (RemoteException e) {
+            bridgeBinder = null;
+            return false;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
     public static boolean removeTask(int taskId) {
         IBinder binder = bridgeBinder;
         if (binder == null || taskId <= 0) {
@@ -179,6 +255,37 @@ public final class RecentsBridgeClient {
                 return Bitmap.CREATOR.createFromParcel(reply);
             }
             return null;
+        } catch (RemoteException e) {
+            bridgeBinder = null;
+            return null;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    @Nullable
+    public static Bitmap getTaskSnapshot(int taskId) {
+        IBinder binder = bridgeBinder;
+        if (binder == null || taskId <= 0) {
+            return null;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            data.writeInt(taskId);
+            if (!binder.transact(TX_GET_TASK_SNAPSHOT, data, reply, 0)) {
+                return null;
+            }
+            reply.readException();
+            byte[] jpeg = reply.createByteArray();
+            if (jpeg == null || jpeg.length == 0) {
+                return null;
+            }
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
         } catch (RemoteException e) {
             bridgeBinder = null;
             return null;

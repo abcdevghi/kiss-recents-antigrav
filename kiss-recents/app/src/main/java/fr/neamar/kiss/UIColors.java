@@ -16,6 +16,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.StyleableRes;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.ColorUtils;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.preference.PreferenceManager;
 
 import com.google.android.material.color.DynamicColors;
@@ -200,23 +202,30 @@ public class UIColors {
     }
 
     public static void updateThemePrimaryColor(Activity activity) {
-        @ColorInt
-        int notificationBarColorOverride = getNotificationBarColor(activity);
-
-        // Circuit breaker, keep default behavior.
-        if (notificationBarColorOverride == COLOR_DEFAULT) {
+        Window window = activity.getWindow();
+        if (window == null) {
             return;
         }
-
-        Window window = activity.getWindow();
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
 
-        // Update status bar color
-        window.setStatusBarColor(notificationBarColorOverride);
+        @ColorInt
+        int notificationBarColorOverride = getNotificationBarColor(activity);
+        if (notificationBarColorOverride != COLOR_DEFAULT) {
+            window.setStatusBarColor(notificationBarColorOverride);
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setNavigationBarContrastEnforced(false);
+            window.setStatusBarContrastEnforced(false);
+        }
+
+        boolean blackIcons = PreferenceManager.getDefaultSharedPreferences(activity)
+                .getBoolean("black-notification-icons", false);
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+        if (controller != null) {
+            controller.setAppearanceLightStatusBars(blackIcons);
+            controller.setAppearanceLightNavigationBars(blackIcons);
         }
     }
 

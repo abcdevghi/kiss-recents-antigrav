@@ -408,4 +408,11 @@
     <string name="menu_keep_alive">Don’t clear</string>
     <string name="menu_keep_alive_off">Allow clearing</string>
     <string name="keep_alive_label">Not cleared</string>
+    <string name="menu_split_screen">Split screen</string>
+    <string name="menu_popup_view">Pop-up</string>
+    <string name="toast_multiwindow_error">Unable to open %s in multi-window</string>
+    <string name="snapshot_greyscale_title">Greyscale app previews</string>
+    <string name="snapshot_greyscale_summary">Show the selected app preview in greyscale</string>
+    <string name="cd_resume_app">Resume app</string>
+    <string name="cd_exit_menu">Close menu</string>
 </resources>

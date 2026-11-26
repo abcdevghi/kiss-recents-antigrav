@@ -7,8 +7,17 @@ import static androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.TypedArray;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.util.TypedValue;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 
+import androidx.annotation.AttrRes;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
@@ -25,7 +34,7 @@ public final class Appearance {
     public static final String[] KEYS = {
             "theme", "night-mode",
             "primary-color", "theme-bar-color", "notification-bar-color", "black-notification-icons",
-            "theme-result-color", "theme-shadow", "theme-wallpaper",
+            "theme-result-color", "theme-shadow", "theme-separator", "theme-wallpaper",
             "pref-rounded-list", "pref-rounded-bars",
             "results-size",
             "icons-pack", "themed-icons", "adaptive-shape", "force-adaptive", "force-shape", "icons-hide"
@@ -35,7 +44,7 @@ public final class Appearance {
     }
 
     /**
-     * Must be called before setContentView().
+     * Must be called before super.onCreate() / setContentView().
      */
     public static void applyTheme(Activity act, SharedPreferences prefs) {
         switch (getTheme(prefs)) {
@@ -82,8 +91,42 @@ public final class Appearance {
         }
     }
 
+    public static boolean isWallpaperEnabled(SharedPreferences prefs) {
+        String wallpaperStyle = prefs.getString("theme-wallpaper", "default");
+        if ("enabled".equals(wallpaperStyle)) {
+            return true;
+        }
+        if ("disabled".equals(wallpaperStyle) || "disabled-light".equals(wallpaperStyle)) {
+            return false;
+        }
+        return !"amoled-dark".equals(getTheme(prefs));
+    }
+
     /**
-     * Must be called before setContentView().
+     * Explicitly synchronize wallpaper window flags, pixel format, and window background so
+     * wallpaper-enabled and opaque themes switch cleanly without transparent frame glitches.
+     */
+    public static void applyWindowWallpaper(Activity act, SharedPreferences prefs) {
+        Window window = act.getWindow();
+        if (window == null) {
+            return;
+        }
+        if (isWallpaperEnabled(prefs)) {
+            window.setFormat(PixelFormat.TRANSLUCENT);
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+            window.setFormat(PixelFormat.OPAQUE);
+            try (TypedArray ta = act.obtainStyledAttributes(new int[]{android.R.attr.windowBackground})) {
+                Drawable bg = ta.getDrawable(0);
+                window.setBackgroundDrawable(bg != null ? bg : new ColorDrawable(Color.BLACK));
+            }
+        }
+    }
+
+    /**
+     * Must be called before super.onCreate() / setContentView().
      */
     public static void applySettingsTheme(Activity act, SharedPreferences prefs) {
         if ("amoled-dark".equals(getTheme(prefs))) {
@@ -117,15 +160,33 @@ public final class Appearance {
     }
 
     /**
-     * Rounded bars and list, as in KISS.
+     * Rounded bars and list, as in KISS, without casting shadow artifacts on transparent containers.
      */
     public static void applyRoundedCorners(SharedPreferences prefs, View searchBar, View resultLayout) {
+        Context context = searchBar.getContext();
+        float opaqueElevation = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 2f, context.getResources().getDisplayMetrics());
+
+        int searchBgColor = resolveAttrColor(context, R.attr.searchBackgroundColor, Color.WHITE);
+        int listBgColor = resolveAttrColor(context, R.attr.listBackgroundColor, Color.WHITE);
+
         if (prefs.getBoolean("pref-rounded-bars", true)) {
             searchBar.setBackgroundResource(R.drawable.rounded_search_bar);
         }
-        if (prefs.getBoolean("pref-rounded-list", false)) {
+        searchBar.setElevation(Color.alpha(searchBgColor) == 255 ? opaqueElevation : 0f);
+
+        if (prefs.getBoolean("pref-rounded-list", false) && Color.alpha(listBgColor) > 0) {
             resultLayout.setBackgroundResource(R.drawable.rounded_result_layout);
             resultLayout.setClipToOutline(true);
+        } else {
+            resultLayout.setClipToOutline(false);
+        }
+        resultLayout.setElevation(Color.alpha(listBgColor) == 255 ? opaqueElevation : 0f);
+    }
+
+    private static int resolveAttrColor(Context context, @AttrRes int attr, int fallback) {
+        try (TypedArray ta = context.obtainStyledAttributes(new int[]{attr})) {
+            return ta.getColor(0, fallback);
         }
     }
 

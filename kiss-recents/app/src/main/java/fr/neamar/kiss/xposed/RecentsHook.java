@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashSet;
@@ -58,6 +59,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
     };
     private static final String TOUCH_INTERACTION_SERVICE = "com.android.quickstep.TouchInteractionService";
     private static final String RECENTS_ACTIVITY = "com.android.quickstep.RecentsActivity";
+    private static final String SPLIT_SCREEN_CONTROLLER = "com.android.wm.shell.splitscreen.SplitScreenController";
 
     /** Diagnostics: which classes of SystemUI and of the launcher are looked at */
     private static final Pattern SYSTEM_UI_CLASS_PATTERN =
@@ -132,8 +134,31 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
         if (!hooked) {
             HookLog.log("SystemUI: nothing hooked, the launcher hooks have to do it");
         }
+        hookSplitScreenController(classLoader);
         if (BuildConfig.DEBUG && ENABLE_DISCOVERY) {
             RecentsDiscovery.run("SystemUI", classLoader, SYSTEM_UI_CLASS_PATTERN);
+        }
+    }
+
+    private static void hookSplitScreenController(ClassLoader classLoader) {
+        Class<?> splitClass = XposedHelpers.findClassIfExists(SPLIT_SCREEN_CONTROLLER, classLoader);
+        if (splitClass == null) {
+            HookLog.debug("SystemUI: no class " + SPLIT_SCREEN_CONTROLLER);
+            return;
+        }
+        try {
+            for (Constructor<?> ctor : splitClass.getDeclaredConstructors()) {
+                ctor.setAccessible(true);
+                XposedBridge.hookMethod(ctor, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        RecentsBridgeService.setSplitScreenController(param.thisObject);
+                    }
+                });
+            }
+            HookLog.debug("SystemUI: hooked " + SPLIT_SCREEN_CONTROLLER + " constructors");
+        } catch (Throwable t) {
+            HookLog.log("SystemUI: cannot hook SplitScreenController: " + t);
         }
     }
 

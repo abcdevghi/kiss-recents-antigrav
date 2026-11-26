@@ -28,6 +28,7 @@ public final class AppPojo extends PojoWithTags {
     public final boolean isTaskOnly;
     public volatile int taskId = -1;
     public volatile boolean hasTaskIcon = false;
+    public volatile int dominantColor = 0;
 
     public AppPojo(String id, @NonNull String packageName, @NonNull String activityName, @NonNull UserHandle userHandle,
                    boolean disabled) {

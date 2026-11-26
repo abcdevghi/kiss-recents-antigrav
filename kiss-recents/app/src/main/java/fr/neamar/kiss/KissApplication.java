@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase;
 
 import fr.neamar.kiss.db.DBHelper;
 import fr.neamar.kiss.utils.IconPackCache;
+import fr.neamar.kiss.utils.TaskSnapshotCache;
 
 public class KissApplication extends Application {
 
@@ -93,6 +94,7 @@ public class KissApplication extends Application {
             SQLiteDatabase.releaseMemory();
             mIconPackCache.clearCache(this);
             mimeTypeCache.clearCache();
+            TaskSnapshotCache.clear();
         }
     }
 

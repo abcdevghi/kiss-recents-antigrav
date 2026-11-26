@@ -1,15 +1,21 @@
 package fr.neamar.kiss.xposed;
 
 import android.app.ActivityManager;
+import android.app.ActivityOptions;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.ColorSpace;
+import android.graphics.Rect;
+import android.hardware.HardwareBuffer;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -27,17 +33,29 @@ final class RecentsBridgeService extends Binder {
     static final int TX_START_TASK = IBinder.FIRST_CALL_TRANSACTION + 1;
     static final int TX_REMOVE_TASK = IBinder.FIRST_CALL_TRANSACTION + 2;
     static final int TX_GET_TASK_ICON = IBinder.FIRST_CALL_TRANSACTION + 3;
+    static final int TX_START_TASK_POPUP = IBinder.FIRST_CALL_TRANSACTION + 4;
+    static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
+    static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
 
     private static final int ACTIVITY_TYPE_STANDARD = 1;
+    private static final int WINDOWING_MODE_FREEFORM = 5;
+    private static final int WINDOWING_MODE_MULTI_WINDOW = 6;
     private static final int MAX_ICON_PX = 192;
+    private static final int MAX_SNAPSHOT_PX = 720;
 
     private static final RecentsBridgeService INSTANCE = new RecentsBridgeService();
 
     private static volatile boolean reflectionInitialized = false;
+    private static volatile Object splitScreenController;
     private static Object activityTaskManager;
     private static Method getRecentTasksMethod;
     private static Method startActivityFromRecentsMethod;
     private static Method removeTaskMethod;
+    private static Method getTaskSnapshotMethod;
+    private static Method takeTaskSnapshotMethod;
+    private static Method setTaskWindowingModeMethod;
+    private static Method resizeTaskMethod;
+    private static Method setLaunchWindowingModeMethod;
     private static Method parceledListGetListMethod;
 
     private static Field realActivityField;
@@ -54,6 +72,12 @@ final class RecentsBridgeService extends Binder {
 
     static RecentsBridgeService getInstance() {
         return INSTANCE;
+    }
+
+    static void setSplitScreenController(Object controller) {
+        if (controller != null) {
+            splitScreenController = controller;
+        }
     }
 
     @Override
@@ -100,6 +124,33 @@ final class RecentsBridgeService extends Binder {
                 }
                 return true;
             }
+            case TX_START_TASK_POPUP: {
+                data.enforceInterface(DESCRIPTOR);
+                int taskId = data.readInt();
+                Rect bounds = data.readInt() != 0 ? Rect.CREATOR.createFromParcel(data) : null;
+                Bundle options = data.readInt() != 0 ? Bundle.CREATOR.createFromParcel(data) : null;
+                boolean ok = startTaskPopup(taskId, bounds, options);
+                reply.writeNoException();
+                reply.writeInt(ok ? 1 : 0);
+                return true;
+            }
+            case TX_START_TASK_SPLIT: {
+                data.enforceInterface(DESCRIPTOR);
+                int taskId = data.readInt();
+                Bundle options = data.readInt() != 0 ? Bundle.CREATOR.createFromParcel(data) : null;
+                boolean ok = startTaskSplit(taskId, options);
+                reply.writeNoException();
+                reply.writeInt(ok ? 1 : 0);
+                return true;
+            }
+            case TX_GET_TASK_SNAPSHOT: {
+                data.enforceInterface(DESCRIPTOR);
+                int taskId = data.readInt();
+                byte[] jpeg = getTaskSnapshotBytes(taskId);
+                reply.writeNoException();
+                reply.writeByteArray(jpeg);
+                return true;
+            }
             default:
                 try {
                     return super.onTransact(code, data, reply, flags);
@@ -126,7 +177,18 @@ final class RecentsBridgeService extends Binder {
                     getRecentTasksMethod = iatmClass.getMethod("getRecentTasks", int.class, int.class, int.class);
                     startActivityFromRecentsMethod = iatmClass.getMethod("startActivityFromRecents", int.class, Bundle.class);
                     removeTaskMethod = iatmClass.getMethod("removeTask", int.class);
+                    getTaskSnapshotMethod = findMethod(iatmClass, "getTaskSnapshot", int.class, boolean.class, boolean.class);
+                    if (getTaskSnapshotMethod == null) {
+                        getTaskSnapshotMethod = findMethod(iatmClass, "getTaskSnapshot", int.class, boolean.class);
+                    }
+                    takeTaskSnapshotMethod = findMethod(iatmClass, "takeTaskSnapshot", int.class, boolean.class);
+                    if (takeTaskSnapshotMethod == null) {
+                        takeTaskSnapshotMethod = findMethod(iatmClass, "takeTaskSnapshot", int.class);
+                    }
+                    setTaskWindowingModeMethod = findMethod(iatmClass, "setTaskWindowingMode", int.class, int.class, boolean.class);
+                    resizeTaskMethod = findMethod(iatmClass, "resizeTask", int.class, Rect.class, int.class);
                 }
+                setLaunchWindowingModeMethod = findMethod(ActivityOptions.class, "setLaunchWindowingMode", int.class);
                 Class<?> sliceClass = Class.forName("android.content.pm.ParceledListSlice");
                 parceledListGetListMethod = sliceClass.getMethod("getList");
 
@@ -230,6 +292,119 @@ final class RecentsBridgeService extends Binder {
         }
     }
 
+    private static boolean startTaskPopup(int taskId, Rect bounds, Bundle baseOptions) {
+        ensureReflection();
+        if (activityTaskManager == null || startActivityFromRecentsMethod == null || taskId <= 0) {
+            return false;
+        }
+        Bundle mergedOptions = mergeWindowingOptions(baseOptions, WINDOWING_MODE_FREEFORM, bounds);
+        long token = Binder.clearCallingIdentity();
+        try {
+            if (setTaskWindowingModeMethod != null) {
+                try {
+                    setTaskWindowingModeMethod.invoke(activityTaskManager, taskId, WINDOWING_MODE_FREEFORM, true);
+                } catch (Throwable ignored) {
+                }
+            }
+            if (resizeTaskMethod != null && bounds != null) {
+                try {
+                    resizeTaskMethod.invoke(activityTaskManager, taskId, bounds, 0);
+                } catch (Throwable ignored) {
+                }
+            }
+            Object res = startActivityFromRecentsMethod.invoke(activityTaskManager, taskId, mergedOptions);
+            boolean started = !(res instanceof Integer) || (Integer) res >= 0;
+            if (started && resizeTaskMethod != null && bounds != null) {
+                try {
+                    resizeTaskMethod.invoke(activityTaskManager, taskId, bounds, 0);
+                } catch (Throwable ignored) {
+                }
+            }
+            return started;
+        } catch (Throwable t) {
+            HookLog.log("startTaskPopup(" + taskId + ") failed: " + t);
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    private static boolean startTaskSplit(int taskId, Bundle baseOptions) {
+        ensureReflection();
+        if (taskId <= 0) {
+            return false;
+        }
+        Object controller = splitScreenController;
+        if (controller != null && invokeSplitControllerStartTask(controller, taskId, baseOptions)) {
+            return true;
+        }
+        if (activityTaskManager == null || startActivityFromRecentsMethod == null) {
+            return false;
+        }
+        Bundle mergedOptions = mergeWindowingOptions(baseOptions, WINDOWING_MODE_MULTI_WINDOW, null);
+        long token = Binder.clearCallingIdentity();
+        try {
+            if (setTaskWindowingModeMethod != null) {
+                try {
+                    setTaskWindowingModeMethod.invoke(activityTaskManager, taskId, WINDOWING_MODE_MULTI_WINDOW, true);
+                } catch (Throwable ignored) {
+                }
+            }
+            Object res = startActivityFromRecentsMethod.invoke(activityTaskManager, taskId, mergedOptions);
+            return !(res instanceof Integer) || (Integer) res >= 0;
+        } catch (Throwable t) {
+            HookLog.log("startTaskSplit(" + taskId + ") failed: " + t);
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    private static boolean invokeSplitControllerStartTask(Object controller, int taskId, Bundle options) {
+        long token = Binder.clearCallingIdentity();
+        try {
+            for (Method method : controller.getClass().getMethods()) {
+                if (!"startTask".equals(method.getName())) {
+                    continue;
+                }
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length == 3 && params[0] == int.class && params[1] == int.class && params[2] == Bundle.class) {
+                    method.invoke(controller, taskId, 0, options);
+                    return true;
+                }
+                if (params.length == 4 && params[0] == int.class && params[1] == int.class && params[2] == Bundle.class) {
+                    Object fourth = params[3] == int.class ? Integer.valueOf(0) : null;
+                    method.invoke(controller, taskId, 0, options, fourth);
+                    return true;
+                }
+            }
+        } catch (Throwable t) {
+            HookLog.log("SplitScreenController.startTask(" + taskId + ") failed: " + t);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return false;
+    }
+
+    private static Bundle mergeWindowingOptions(Bundle baseOptions, int windowingMode, Rect bounds) {
+        Bundle merged = baseOptions != null ? new Bundle(baseOptions) : new Bundle();
+        try {
+            ActivityOptions ao = ActivityOptions.makeBasic();
+            if (setLaunchWindowingModeMethod != null) {
+                setLaunchWindowingModeMethod.invoke(ao, windowingMode);
+            }
+            if (bounds != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                ao.setLaunchBounds(bounds);
+            }
+            Bundle modeBundle = ao.toBundle();
+            if (modeBundle != null) {
+                merged.putAll(modeBundle);
+            }
+        } catch (Throwable ignored) {
+        }
+        return merged;
+    }
+
     private static boolean removeTask(int taskId) {
         ensureReflection();
         if (activityTaskManager == null || removeTaskMethod == null || taskId <= 0) {
@@ -268,6 +443,105 @@ final class RecentsBridgeService extends Binder {
             }
         }
         return null;
+    }
+
+    private static byte[] getTaskSnapshotBytes(int taskId) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || taskId <= 0) {
+            return null;
+        }
+        ensureReflection();
+        if (activityTaskManager == null) {
+            return null;
+        }
+        Object snapshot = null;
+        long token = Binder.clearCallingIdentity();
+        try {
+            if (getTaskSnapshotMethod != null) {
+                if (getTaskSnapshotMethod.getParameterCount() == 3) {
+                    snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false, true);
+                } else {
+                    snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false);
+                }
+            }
+            if (snapshot == null && takeTaskSnapshotMethod != null) {
+                if (takeTaskSnapshotMethod.getParameterCount() == 2) {
+                    snapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId, true);
+                } else {
+                    snapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId);
+                }
+            }
+        } catch (Throwable t) {
+            HookLog.debug("getTaskSnapshot(" + taskId + ") failed: " + t);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        if (snapshot == null) {
+            return null;
+        }
+
+        HardwareBuffer hardwareBuffer = null;
+        Bitmap hwBitmap = null;
+        Bitmap swBitmap = null;
+        Bitmap scaledBitmap = null;
+        try {
+            Method getHwBuffer = snapshot.getClass().getMethod("getHardwareBuffer");
+            Object hbObj = getHwBuffer.invoke(snapshot);
+            if (!(hbObj instanceof HardwareBuffer)) {
+                return null;
+            }
+            hardwareBuffer = (HardwareBuffer) hbObj;
+            ColorSpace colorSpace = null;
+            try {
+                Method getCs = snapshot.getClass().getMethod("getColorSpace");
+                Object csObj = getCs.invoke(snapshot);
+                if (csObj instanceof ColorSpace) {
+                    colorSpace = (ColorSpace) csObj;
+                }
+            } catch (Throwable ignored) {
+            }
+            hwBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace);
+            if (hwBitmap == null) {
+                return null;
+            }
+            swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false);
+            if (swBitmap == null) {
+                return null;
+            }
+            Bitmap outBitmap = swBitmap;
+            int w = swBitmap.getWidth();
+            int h = swBitmap.getHeight();
+            if (w > MAX_SNAPSHOT_PX || h > MAX_SNAPSHOT_PX) {
+                float scale = Math.min((float) MAX_SNAPSHOT_PX / w, (float) MAX_SNAPSHOT_PX / h);
+                scaledBitmap = Bitmap.createScaledBitmap(
+                        swBitmap,
+                        Math.max(1, Math.round(w * scale)),
+                        Math.max(1, Math.round(h * scale)),
+                        true);
+                outBitmap = scaledBitmap;
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
+            outBitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos);
+            return baos.toByteArray();
+        } catch (Throwable t) {
+            HookLog.debug("TaskSnapshot decode failed for task " + taskId + ": " + t);
+            return null;
+        } finally {
+            if (scaledBitmap != null && scaledBitmap != swBitmap && !scaledBitmap.isRecycled()) {
+                scaledBitmap.recycle();
+            }
+            if (swBitmap != null && !swBitmap.isRecycled()) {
+                swBitmap.recycle();
+            }
+            if (hwBitmap != null && !hwBitmap.isRecycled()) {
+                hwBitmap.recycle();
+            }
+            if (hardwareBuffer != null) {
+                try {
+                    hardwareBuffer.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
     }
 
     private static boolean isIncludeableTask(ActivityManager.RecentTaskInfo info) {
@@ -356,9 +630,9 @@ final class RecentsBridgeService extends Binder {
         return null;
     }
 
-    private static Method findMethod(Class<?> clazz, String name) {
+    private static Method findMethod(Class<?> clazz, String name, Class<?>... parameterTypes) {
         try {
-            Method m = clazz.getMethod(name);
+            Method m = clazz.getMethod(name, parameterTypes);
             m.setAccessible(true);
             return m;
         } catch (NoSuchMethodException ignored) {

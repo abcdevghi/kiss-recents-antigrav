@@ -37,7 +37,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import fr.neamar.kiss.BuildConfig;
 import fr.neamar.kiss.CustomIconDialog;
 import fr.neamar.kiss.KissApplication;
 import fr.neamar.kiss.R;
@@ -275,11 +274,6 @@ public abstract class Result<T extends Pojo> {
     }
 
     private ListPopup inflatePopupMenu(ArrayAdapter<ListPopup.Item> adapter, Context context) {
-        if (BuildConfig.DEBUG) {
-            adapter.add(new ListPopup.Item("Relevance: " + pojo.relevance));
-            adapter.add(new ListPopup.Item("ID: " + pojo.id));
-        }
-
         ListPopup menu = new ListPopup(context);
         menu.setAdapter(adapter);
         return menu;

@@ -151,9 +151,9 @@ public abstract class Searcher extends AsyncTask<Void, Result<?>, Void> {
         }
         if (isRefresh) {
             // Refreshes happen in the background, e.g. when an app is updated: don't disturb a result being pressed
-            activity.list.runWhenNotTouched(displayResults);
+            activity.carousel.runWhenNotTouched(displayResults);
         } else {
-            activity.list.cancelRunWhenNotTouched();
+            activity.carousel.cancelRunWhenNotTouched();
             displayResults.run();
         }
 

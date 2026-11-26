@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import fr.neamar.kiss.DataHandler;
+import fr.neamar.kiss.KeepAlive;
 import fr.neamar.kiss.KissApplication;
 import fr.neamar.kiss.MainActivity;
 import fr.neamar.kiss.RootHandler;
@@ -293,6 +294,10 @@ public class HistorySearcher extends Searcher {
             for (AppPojo app : result.others) {
                 app.relevance = relevance--;
             }
+
+            Set<String> liveKeptCandidates = new HashSet<>(taskPackages);
+            liveKeptCandidates.addAll(snapshot.rssKbByPackage.keySet());
+            KeepAlive.reinforceRunning(activity, liveKeptCandidates);
 
             lastTasks = Collections.unmodifiableList(new ArrayList<>(result.tasks));
             lastFetchUptimeMs = SystemClock.uptimeMillis();

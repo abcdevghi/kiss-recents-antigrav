@@ -4,13 +4,14 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.database.DataSetObserver;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
-import android.widget.AbsListView;
 import android.widget.ImageView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -28,9 +29,8 @@ import fr.neamar.kiss.searcher.HistorySearcher;
 import fr.neamar.kiss.searcher.QueryInterface;
 import fr.neamar.kiss.searcher.SearchHandler;
 import fr.neamar.kiss.searcher.Searcher;
-import fr.neamar.kiss.ui.AnimatedListView;
 import fr.neamar.kiss.ui.ListPopup;
-import fr.neamar.kiss.ui.SwipeToDismiss;
+import fr.neamar.kiss.ui.RecentsCarouselView;
 import fr.neamar.kiss.utils.Log;
 import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.SystemBars;
@@ -61,7 +61,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     public RecordAdapter adapter;
     public SharedPreferences prefs;
-    public AnimatedListView list;
+    public RecentsCarouselView carousel;
 
     private View listContainer;
     private View emptyListView;
@@ -69,7 +69,6 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private View loaderSpinner;
     private ListPopup mPopup;
     private String appearanceSignature;
-    private SwipeToDismiss swipeToDismiss;
     private boolean started;
     private long lastRecentsPress;
     private long sessionStartUptimeMs;
@@ -78,21 +77,25 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        boolean isKissApp = getApplication() instanceof KissApplication;
+        if (isKissApp) {
+            prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            // Theme must be applied before super.onCreate() so window attributes initialize cleanly
+            Appearance.applyTheme(this, prefs);
+            appearanceSignature = Appearance.signature(prefs);
+            UIColors.clearColorCache();
+        }
+
         super.onCreate(savedInstanceState);
 
         // During a full backup restore, Android may start the process in restricted mode with a plain Application.
-        if (!(getApplication() instanceof KissApplication)) {
+        if (!isKissApp) {
             Log.w(TAG, "Not running in KissApplication, process is likely in restricted mode (backup/restore)");
             finish();
             return;
         }
 
-        prefs = PreferenceManager.getDefaultSharedPreferences(this);
-
-        // Theme must be applied before setContentView()
-        Appearance.applyTheme(this, prefs);
-        appearanceSignature = Appearance.signature(prefs);
-        UIColors.clearColorCache();
+        Appearance.applyWindowWallpaper(this, prefs);
         UIColors.updateThemePrimaryColor(this);
 
         KissApplication.getApplication(this).getDataHandler().setMainActivity(this);
@@ -101,8 +104,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         View contentView = findViewById(android.R.id.content);
         SystemBars.applyInsets(contentView, contentView);
 
-        list = findViewById(android.R.id.list);
-        listContainer = (View) list.getParent();
+        listContainer = findViewById(R.id.resultLayout);
+        carousel = findViewById(R.id.recentsCarousel);
         Appearance.applyRoundedCorners(prefs, findViewById(R.id.searchEditLayout), listContainer);
         emptyListView = findViewById(android.R.id.empty);
         launcherButton = findViewById(R.id.launcherButton);
@@ -113,15 +116,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         displayLoader(!providersLoaded);
 
         adapter = new RecordAdapter(this, new ArrayList<>());
-        list.setAdapter(adapter);
-        list.setOnItemClickListener((parent, v, position, id) -> adapter.onClick(position, v));
-        list.setOnItemLongClickListener((parent, v, pos, id) -> {
-            adapter.onLongClick(pos, v);
-            return true;
-        });
-
-        // Swipe a row sideways to stop the app and remove it
-        swipeToDismiss = new SwipeToDismiss(list, adapter, new SwipeToDismiss.Callback() {
+        carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
+        carousel.setCallback(new RecentsCarouselView.Callback() {
             @Override
             public boolean canDismiss(Result<?> result) {
                 return result instanceof AppResult && canControlRecents();
@@ -139,9 +135,19 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 stopApps(results);
                 adapter.removeResults(results);
             }
+
+            @Override
+            public void onLaunchSelected(Result<?> result, @Nullable View sourceView) {
+                resetRecentsPressState();
+                result.launch(MainActivity.this, sourceView, MainActivity.this);
+            }
+
+            @Override
+            public void onKeepAliveToggled() {
+                carousel.refreshAllBoundItems();
+            }
         });
-        list.setOnTouchListener(swipeToDismiss);
-        list.setOnScrollListener(swipeToDismiss.makeScrollListener());
+        carousel.setAdapter(adapter);
 
         // Show a message when nothing is open
         adapter.registerDataSetObserver(new DataSetObserver() {
@@ -151,6 +157,20 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 boolean empty = adapter.isEmpty();
                 listContainer.setVisibility(empty ? View.GONE : View.VISIBLE);
                 emptyListView.setVisibility(empty ? View.VISIBLE : View.GONE);
+                carousel.onDatasetChanged(false);
+            }
+        });
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (carousel != null && carousel.isContextMenuOpen()) {
+                    carousel.closeContextMenu();
+                    return;
+                }
+                setEnabled(false);
+                getOnBackPressedDispatcher().onBackPressed();
+                setEnabled(true);
             }
         });
 
@@ -189,6 +209,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
 
         dismissPopup();
+        carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
 
         if (KissApplication.getApplication(this).getDataHandler().isAllProvidersLoaded()) {
             displayLoader(false);
@@ -203,6 +224,19 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         super.onStop();
         started = false;
         resetRecentsPressState();
+        if (carousel != null) {
+            carousel.closeContextMenu();
+            carousel.resetSelection();
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (prefs != null) {
+            UIColors.clearColorCache();
+            recreate();
+        }
     }
 
     @Override
@@ -339,7 +373,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
      */
     private void clearAllRecents() {
         if (canControlRecents()) {
-            swipeToDismiss.dismissAll();
+            carousel.dismissAll();
         }
     }
 
@@ -380,7 +414,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     public void updateSearchRecords() {
-        if (swipeToDismiss != null && swipeToDismiss.isAnimating()) {
+        if (carousel != null && carousel.isAnimating()) {
             // A row is sliding out and could be reused for another item: the removal updates the list anyway
             return;
         }
@@ -434,25 +468,18 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     @Override
     public void temporarilyDisableTranscriptMode() {
-        updateTranscriptMode(AbsListView.TRANSCRIPT_MODE_DISABLED);
-        // Process after all current messages, to reset transcript mode to default
-        list.post(() -> updateTranscriptMode(AbsListView.TRANSCRIPT_MODE_ALWAYS_SCROLL));
     }
 
     @Override
     public void updateTranscriptMode(int transcriptMode) {
-        list.setTranscriptMode(transcriptMode);
     }
 
     @Override
     public void beforeListChange() {
-        // Remember where the rows are, so that they can slide to their new place
-        list.prepareChangeAnim();
     }
 
     @Override
     public void afterListChange() {
-        list.animateChange();
     }
 
     @Override
