@@ -777,25 +777,34 @@ public class RecentsCarouselView extends FrameLayout {
                 float pxPerItem = unfocusedHeightPx + itemGapPx;
                 int startMilli = Math.round(scrollItemPos * 1000f);
                 int velMilli = Math.round((-vy / Math.max(1f, pxPerItem)) * 880f);
-                scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, 0, maxIdx * 1000, 0, 0);
-                int currentIdx = Math.round(clamp(scrollItemPos, 0f, maxIdx));
-                int targetIdx = Math.round(clamp(scrollScroller.getFinalY() / 1000f, 0f, maxIdx));
-                if (targetIdx == currentIdx) {
-                    targetIdx = (int) clamp(currentIdx + (vy < 0f ? 1f : -1f), 0f, maxIdx);
-                }
-                if (Math.abs(targetIdx - scrollItemPos) <= 1.15f) {
+                scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, -100000, maxIdx * 1000 + 100000, 0, 0);
+                int rawFinalY = scrollScroller.getFinalY();
+                if (rawFinalY < 0 || rawFinalY > maxIdx * 1000) {
+                    int overMilli = Math.round(EDGE_OVERSCROLL_RANGE_ITEMS * 0.50f * 1000f);
                     scrollScroller.abortAnimation();
                     flingTargetVisualIdx = -1;
-                    snapScrollTo(targetIdx, true, true);
-                    releaseScrollSway();
-                } else {
-                    int boundY = targetIdx * 1000;
-                    int minBound = Math.min(startMilli, boundY);
-                    int maxBound = Math.max(startMilli, boundY);
-                    scrollScroller.abortAnimation();
-                    scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, minBound, maxBound, 0, 0);
-                    flingTargetVisualIdx = targetIdx;
+                    scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, 0, maxIdx * 1000, 0, overMilli);
                     postOnAnimation(flingTick);
+                } else {
+                    int currentIdx = Math.round(clamp(scrollItemPos, 0f, maxIdx));
+                    int targetIdx = Math.round(clamp(rawFinalY / 1000f, 0f, maxIdx));
+                    if (targetIdx == currentIdx) {
+                        targetIdx = (int) clamp(currentIdx + (vy < 0f ? 1f : -1f), 0f, maxIdx);
+                    }
+                    if (Math.abs(targetIdx - scrollItemPos) <= 1.15f) {
+                        scrollScroller.abortAnimation();
+                        flingTargetVisualIdx = -1;
+                        snapScrollTo(targetIdx, true, true);
+                        releaseScrollSway();
+                    } else {
+                        int boundY = targetIdx * 1000;
+                        int minBound = Math.min(startMilli, boundY);
+                        int maxBound = Math.max(startMilli, boundY);
+                        scrollScroller.abortAnimation();
+                        scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, minBound, maxBound, 0, 0);
+                        flingTargetVisualIdx = targetIdx;
+                        postOnAnimation(flingTick);
+                    }
                 }
             } else {
                 snapScrollToNearest(true);
@@ -1190,7 +1199,8 @@ public class RecentsCarouselView extends FrameLayout {
         float focalY = height * 0.52f;
         float arcRadius = Math.max(height * 0.95f, DrawableUtils.dpToPx(getContext(), 520f));
         float stepPx = unfocusedHeightPx + itemGapPx;
-        float extraHalf = Math.max(0f, (bannerHeightPx - unfocusedHeightPx) * 0.5f);
+        float grabInset = bannerHeightPx * 0.5f * (1f - grabScale);
+        float extraHalf = Math.max(0f, (bannerHeightPx - unfocusedHeightPx) * 0.5f - grabInset);
 
         int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
         int shrinkingVisualIdx = adapterToVisualPos(shrinkingAdapterPos);
