@@ -109,6 +109,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
         rootLayout = findViewById(R.id.mainRoot);
         rootLayout.setClearTransparentViewport(wallpaperEnabled);
+        rootLayout.setDarkWallpaperOverlay(prefs.getBoolean("wallpaper-dim-overlay", true));
         listContainer = findViewById(R.id.resultLayout);
         carousel = findViewById(R.id.recentsCarousel);
         carousel.setTransparentViewport(wallpaperEnabled);
@@ -218,6 +219,10 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
 
         dismissPopup();
+        Appearance.applyWindowWallpaper(this, prefs);
+        if (rootLayout != null) {
+            rootLayout.setDarkWallpaperOverlay(prefs.getBoolean("wallpaper-dim-overlay", true));
+        }
         carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
 
         if (KissApplication.getApplication(this).getDataHandler().isAllProvidersLoaded()) {

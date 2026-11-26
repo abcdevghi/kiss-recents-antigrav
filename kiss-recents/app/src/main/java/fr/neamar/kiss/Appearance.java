@@ -116,12 +116,16 @@ public final class Appearance {
             return;
         }
         if (isWallpaperEnabled(prefs)) {
+            final boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
             window.setFormat(PixelFormat.TRANSLUCENT);
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
             window.setBackgroundDrawable(new Drawable() {
                 @Override
                 public void draw(@NonNull Canvas canvas) {
                     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                    if (dimOverlay) {
+                        canvas.drawColor(0x4D000000, PorterDuff.Mode.SRC_OVER);
+                    }
                 }
 
                 @Override
@@ -185,17 +189,16 @@ public final class Appearance {
      * Rounded bars and list, as in KISS, without casting shadow artifacts on transparent containers.
      */
     public static void applyRoundedCorners(SharedPreferences prefs, View searchBar, View resultLayout) {
-        Context context = searchBar.getContext();
+        Context context = resultLayout.getContext();
         float opaqueElevation = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, 2f, context.getResources().getDisplayMetrics());
 
-        int searchBgColor = resolveAttrColor(context, R.attr.searchBackgroundColor, Color.WHITE);
         int listBgColor = resolveAttrColor(context, R.attr.listBackgroundColor, Color.WHITE);
 
-        if (prefs.getBoolean("pref-rounded-bars", true)) {
-            searchBar.setBackgroundResource(R.drawable.rounded_search_bar);
+        if (searchBar != null) {
+            searchBar.setBackground(null);
+            searchBar.setElevation(0f);
         }
-        searchBar.setElevation(Color.alpha(searchBgColor) == 255 ? opaqueElevation : 0f);
 
         if (prefs.getBoolean("pref-rounded-list", false) && Color.alpha(listBgColor) > 0) {
             resultLayout.setBackgroundResource(R.drawable.rounded_result_layout);

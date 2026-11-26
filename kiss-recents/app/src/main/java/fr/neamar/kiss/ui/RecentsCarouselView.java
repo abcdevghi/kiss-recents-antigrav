@@ -79,6 +79,9 @@ public class RecentsCarouselView extends FrameLayout {
     private static final float FAST_WHEEL_ITEMS_PER_SEC = 5.5f;
     private static final long THUMBNAIL_STABILIZE_DELAY_MS = 75L;
     private static final float EDGE_OVERSCROLL_RANGE_ITEMS = 2.6f;
+    private static final float MOMENTUM_OVERSHOOT_MAX_ITEMS = 0.70f;
+    private static final float MOMENTUM_OVERSHOOT_BRAKE_RATE = 13.0f;
+    private static final float MOMENTUM_OVERSHOOT_STOP_VEL = 1.8f;
 
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
     private static final Interpolator DECELERATE = new DecelerateInterpolator(1.6f);
@@ -169,6 +172,11 @@ public class RecentsCarouselView extends FrameLayout {
     private boolean thumbnailsSuppressed = false;
     private boolean bannerBoundLightweight = false;
     private boolean transparentViewport = false;
+    private boolean overshootBrakingActive = false;
+    private float brakingEdge = 0f;
+    private float brakingRawOvershoot = 0f;
+    private float brakingVelItemsPerSec = 0f;
+    private long lastBrakingTickMs = 0L;
 
     private final Runnable stabilizeThumbnailsRunnable = new Runnable() {
         @Override
@@ -180,25 +188,64 @@ public class RecentsCarouselView extends FrameLayout {
     private final Runnable flingTick = new Runnable() {
         @Override
         public void run() {
+            if (overshootBrakingActive) {
+                long now = SystemClock.uptimeMillis();
+                float dt = clamp((now - lastBrakingTickMs) / 1000f, 0.001f, 0.05f);
+                lastBrakingTickMs = now;
+                brakingVelItemsPerSec *= (float) Math.exp(-MOMENTUM_OVERSHOOT_BRAKE_RATE * dt);
+                brakingRawOvershoot += brakingVelItemsPerSec * dt;
+                float oldPos = scrollItemPos;
+                scrollItemPos = mapMomentumOvershoot(brakingEdge, brakingRawOvershoot);
+                float vel = (scrollItemPos - oldPos) / dt;
+                scrollSwayPx = clamp(vel * DrawableUtils.dpToPx(getContext(), 6f), -maxScrollSwayPx, maxScrollSwayPx);
+                updateWheelSpeed(oldPos, scrollItemPos);
+                thumbnailsSuppressed = isWheelMovingFast();
+                updateAutoSelectionFromScroll(true);
+
+                if (Math.abs(brakingVelItemsPerSec) <= MOMENTUM_OVERSHOOT_STOP_VEL) {
+                    overshootBrakingActive = false;
+                    snapScrollTo(brakingEdge, true, true);
+                    releaseScrollSway();
+                    return;
+                }
+                layoutCarousel();
+                postOnAnimation(this);
+                return;
+            }
+
             if (scrollScroller.computeScrollOffset()) {
                 float oldPos = scrollItemPos;
-                scrollItemPos = scrollScroller.getCurrY() / 1000f;
+                float nextPos = scrollScroller.getCurrY() / 1000f;
+                int maxIdx = Math.max(0, getItemCount() - 1);
+                if (flingTargetVisualIdx < 0 && (nextPos < 0f || nextPos > maxIdx)) {
+                    float edge = nextPos < 0f ? 0f : maxIdx;
+                    float sign = nextPos < 0f ? -1f : 1f;
+                    float scrollerSpeed = Math.max(2f, scrollScroller.getCurrVelocity() / 1000f);
+                    scrollScroller.abortAnimation();
+                    overshootBrakingActive = true;
+                    brakingEdge = edge;
+                    brakingRawOvershoot = clamp(nextPos - edge, -0.15f, 0.15f);
+                    brakingVelItemsPerSec = sign * Math.min(scrollerSpeed * 0.65f, 24f);
+                    lastBrakingTickMs = SystemClock.uptimeMillis();
+                    scrollItemPos = mapMomentumOvershoot(brakingEdge, brakingRawOvershoot);
+                    float vel = (scrollItemPos - oldPos) * 60f;
+                    scrollSwayPx = clamp(vel * DrawableUtils.dpToPx(getContext(), 6f), -maxScrollSwayPx, maxScrollSwayPx);
+                    updateWheelSpeed(oldPos, scrollItemPos);
+                    thumbnailsSuppressed = isWheelMovingFast();
+                    updateAutoSelectionFromScroll(true);
+                    layoutCarousel();
+                    postOnAnimation(this);
+                    return;
+                }
+
+                scrollItemPos = nextPos;
                 float vel = (scrollItemPos - oldPos) * 60f;
                 scrollSwayPx = clamp(vel * DrawableUtils.dpToPx(getContext(), 6f), -maxScrollSwayPx, maxScrollSwayPx);
                 updateWheelSpeed(oldPos, scrollItemPos);
                 thumbnailsSuppressed = isWheelMovingFast();
                 updateAutoSelectionFromScroll(true);
 
-                int maxIdx = Math.max(0, getItemCount() - 1);
-                if (flingTargetVisualIdx < 0) {
-                    if ((scrollItemPos < -0.01f && scrollItemPos >= oldPos)
-                            || (scrollItemPos > maxIdx + 0.01f && scrollItemPos <= oldPos)) {
-                        scrollScroller.abortAnimation();
-                        snapScrollTo(scrollItemPos < 0f ? 0f : maxIdx, true, true);
-                        releaseScrollSway();
-                        return;
-                    }
-                } else {
+                if (flingTargetVisualIdx >= 0) {
                     int targetIdx = flingTargetVisualIdx;
                     if (Math.abs(scrollItemPos - targetIdx) <= 0.22f
                             && Math.abs(scrollItemPos - targetIdx) < Math.abs(oldPos - targetIdx)) {
@@ -394,6 +441,7 @@ public class RecentsCarouselView extends FrameLayout {
         wheelSpeedItemsPerSec = 0f;
         thumbnailsSuppressed = false;
         bannerBoundLightweight = false;
+        overshootBrakingActive = false;
         removeCallbacks(stabilizeThumbnailsRunnable);
         cancelAnimator(bannerExpandAnimator);
         cancelAnimator(shrinkAnimator);
@@ -563,6 +611,7 @@ public class RecentsCarouselView extends FrameLayout {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         pendingNotTouchedAction = null;
+        overshootBrakingActive = false;
         removeCallbacks(flingTick);
         removeCallbacks(stabilizeThumbnailsRunnable);
         removeCallbacks(longPressRunnable);
@@ -642,6 +691,7 @@ public class RecentsCarouselView extends FrameLayout {
         longPressTriggered = false;
         dismissHapticFired = false;
         flingTargetVisualIdx = -1;
+        overshootBrakingActive = false;
         suppressContextMenuOnHorizontalSnap = false;
         rawScrollItemPos = unmapOverscroll(scrollItemPos, Math.max(0, getItemCount() - 1));
         wheelSpeedItemsPerSec = 0f;
@@ -802,10 +852,8 @@ public class RecentsCarouselView extends FrameLayout {
                 scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, -100000, maxIdx * 1000 + 100000, 0, 0);
                 int rawFinalY = scrollScroller.getFinalY();
                 if (rawFinalY < 0 || rawFinalY > maxIdx * 1000) {
-                    int overMilli = Math.round(EDGE_OVERSCROLL_RANGE_ITEMS * 0.50f * 1000f);
-                    scrollScroller.abortAnimation();
                     flingTargetVisualIdx = -1;
-                    scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, 0, maxIdx * 1000, 0, overMilli);
+                    overshootBrakingActive = false;
                     postOnAnimation(flingTick);
                 } else {
                     int currentIdx = Math.round(clamp(scrollItemPos, 0f, maxIdx));
@@ -1056,6 +1104,7 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private void snapScrollTo(float targetVisualPos, boolean elastic, final boolean updateAutoSelect) {
+        overshootBrakingActive = false;
         if (Math.abs(scrollItemPos - targetVisualPos) < 0.002f) {
             scrollItemPos = targetVisualPos;
             if (updateAutoSelect) {
@@ -1755,6 +1804,13 @@ public class RecentsCarouselView extends FrameLayout {
             return maxIdx + rubberBand(rawPos - maxIdx, EDGE_OVERSCROLL_RANGE_ITEMS);
         }
         return rawPos;
+    }
+
+    private static float mapMomentumOvershoot(float edge, float rawOvershoot) {
+        if (rawOvershoot < 0f) {
+            return edge - rubberBand(-rawOvershoot, MOMENTUM_OVERSHOOT_MAX_ITEMS);
+        }
+        return edge + rubberBand(rawOvershoot, MOMENTUM_OVERSHOOT_MAX_ITEMS);
     }
 
     private static float unmapOverscroll(float mappedPos, int maxIdx) {

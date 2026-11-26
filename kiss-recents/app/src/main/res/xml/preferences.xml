@@ -15,4 +15,9 @@
         app:key="snapshot-greyscale"
         app:summary="@string/snapshot_greyscale_summary"
         app:title="@string/snapshot_greyscale_title" />
+    <androidx.preference.SwitchPreferenceCompat
+        app:defaultValue="true"
+        app:key="wallpaper-dim-overlay"
+        app:summary="@string/wallpaper_dim_overlay_summary"
+        app:title="@string/wallpaper_dim_overlay_title" />
 </PreferenceScreen>

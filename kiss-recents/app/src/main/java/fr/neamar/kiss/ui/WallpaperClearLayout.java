@@ -16,7 +16,10 @@ import androidx.annotation.Nullable;
  */
 public class WallpaperClearLayout extends RelativeLayout {
 
+    private static final int DARK_OVERLAY_COLOR = 0x4D000000;
+
     private boolean clearTransparentViewport = false;
+    private boolean darkWallpaperOverlay = true;
 
     public WallpaperClearLayout(@NonNull Context context) {
         super(context);
@@ -38,10 +41,20 @@ public class WallpaperClearLayout extends RelativeLayout {
         }
     }
 
+    public void setDarkWallpaperOverlay(boolean enabled) {
+        if (darkWallpaperOverlay != enabled) {
+            darkWallpaperOverlay = enabled;
+            invalidate();
+        }
+    }
+
     @Override
     protected void onDraw(@NonNull Canvas canvas) {
         if (clearTransparentViewport) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+            if (darkWallpaperOverlay) {
+                canvas.drawColor(DARK_OVERLAY_COLOR, PorterDuff.Mode.SRC_OVER);
+            }
         }
         super.onDraw(canvas);
     }

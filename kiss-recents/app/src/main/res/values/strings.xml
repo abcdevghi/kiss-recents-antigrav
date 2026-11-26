@@ -413,5 +413,7 @@
     <string name="toast_multiwindow_error">Unable to open %s in multi-window</string>
     <string name="snapshot_greyscale_title">Greyscale app previews</string>
     <string name="snapshot_greyscale_summary">Show the selected app preview in greyscale</string>
+    <string name="wallpaper_dim_overlay_title">Dark wallpaper overlay</string>
+    <string name="wallpaper_dim_overlay_summary">Subtle dark tint over the wallpaper for better contrast</string>
     <string name="cd_exit_menu">Close menu</string>
 </resources>
