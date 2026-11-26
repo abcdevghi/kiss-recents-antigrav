@@ -1,0 +1,592 @@
+package fr.neamar.kiss.result;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
+import android.text.style.UnderlineSpan;
+import android.util.Pair;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.AbsListView;
+import android.widget.ArrayAdapter;
+import android.widget.ImageView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.*;
+import androidx.preference.PreferenceManager;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import fr.neamar.kiss.BuildConfig;
+import fr.neamar.kiss.CustomIconDialog;
+import fr.neamar.kiss.KissApplication;
+import fr.neamar.kiss.R;
+import fr.neamar.kiss.UIColors;
+import fr.neamar.kiss.adapter.RecordAdapter;
+import fr.neamar.kiss.db.DBHelper;
+import fr.neamar.kiss.icons.IconPack;
+import fr.neamar.kiss.normalizer.StringNormalizer;
+import fr.neamar.kiss.pojo.*;
+import fr.neamar.kiss.searcher.QueryInterface;
+import fr.neamar.kiss.searcher.SearchHandler;
+import fr.neamar.kiss.searcher.Searcher;
+import fr.neamar.kiss.ui.ListPopup;
+import fr.neamar.kiss.utils.ClipboardUtils;
+import fr.neamar.kiss.utils.DrawableUtils;
+import fr.neamar.kiss.utils.Log;
+import fr.neamar.kiss.utils.Utilities;
+import fr.neamar.kiss.utils.fuzzy.FuzzyScore;
+import fr.neamar.kiss.utils.fuzzy.MatchInfo;
+
+public abstract class Result<T extends Pojo> {
+
+    private static final String TAG = Result.class.getSimpleName();
+    private static final int TAG_RUNNING_TASK = R.id.item_app_icon;
+
+    /**
+     * Current information pojo
+     */
+    @NonNull
+    protected final T pojo;
+
+    protected Result(@NonNull T pojo) {
+        this.pojo = pojo;
+    }
+
+    public static Result<?> fromPojo(QueryInterface parent, @NonNull Pojo pojo) {
+        if (pojo instanceof AppPojo)
+            return new AppResult((AppPojo) pojo);
+
+        throw new UnsupportedOperationException("Unable to create a result from POJO");
+    }
+
+    public static int getItemViewType(Result<?> result) {
+        if (result instanceof AppResult)
+            return 0;
+        else
+            return -1;
+    }
+
+    public String getPojoId() {
+        return pojo.id;
+    }
+
+    @NonNull
+    public T getPojo() {
+        return this.pojo;
+    }
+
+    public String getFavoriteId() {
+        return pojo.getFavoriteId();
+    }
+
+    @NonNull
+    @Override
+    public String toString() {
+        return pojo.getName();
+    }
+
+    /**
+     * How to display this record ?
+     *
+     * @param context     android context
+     * @param convertView a view to be recycled
+     * @param parent      view that provides a set of LayoutParams values
+     * @param fuzzyScore  information for highlighting search result
+     * @return a view to display as item
+     */
+    @NonNull
+    public abstract View display(Context context, View convertView, @NonNull ViewGroup parent, FuzzyScore fuzzyScore);
+
+    public void inflateFavorite(@NonNull Context context, @NonNull View favoriteView) {
+        ImageView favoriteImage = favoriteView.findViewById(R.id.favorite);
+        if (favoriteImage != null) {
+            setAsyncDrawable(favoriteImage, 0);
+        }
+        favoriteView.setContentDescription(pojo.getName());
+    }
+
+    protected void displayHighlighted(String text, List<Pair<Integer, Integer>> positions, TextView view, Context context) {
+        SpannableString enriched = new SpannableString(text);
+        Set<String> resultHighlighting = PreferenceManager.getDefaultSharedPreferences(context)
+                .getStringSet("pref-result-highlighting", Collections.singleton("color"));
+
+        if (!resultHighlighting.isEmpty()) {
+            int primaryColor = UIColors.getPrimaryColor(context);
+            int len = text.length();
+            for (Pair<Integer, Integer> position : positions) {
+                if (position.first <= len) {
+                    for (String highlight : resultHighlighting) {
+                        Object span = createSpan(highlight, primaryColor);
+                        if (span != null) {
+                            enriched.setSpan(
+                                    span,
+                                    position.first,
+                                    Math.min(position.second, len),
+                                    Spannable.SPAN_INCLUSIVE_INCLUSIVE
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        view.setText(enriched);
+    }
+
+    protected boolean displayHighlighted(StringNormalizer.Result normalized, String text, @Nullable FuzzyScore fuzzyScore,
+                                         TextView view, Context context) {
+        if (fuzzyScore == null) {
+            view.setText(text);
+            return false;
+        }
+        MatchInfo matchInfo = fuzzyScore.match(normalized.codePoints);
+
+        if (matchInfo.getMatchedIndices().isEmpty()) {
+            view.setText(text);
+            return false;
+        }
+
+        displayHighlighted(text, getMatchedSequences(matchInfo, normalized), view, context);
+        return true;
+    }
+
+    private List<Pair<Integer, Integer>> getMatchedSequences(MatchInfo matchInfo, StringNormalizer.Result normalized) {
+        List<Integer> matchedIndices = matchInfo.getMatchedIndices();
+        if (matchedIndices == null) {
+            return Collections.emptyList();
+        }
+
+        // compute pair match indices
+        List<Pair<Integer, Integer>> positions = new ArrayList<>(matchedIndices.size());
+        int start = matchedIndices.get(0);
+        int end = start + 1;
+        for (int i = 1; i < matchedIndices.size(); i += 1) {
+            if (end == matchedIndices.get(i)) {
+                end += 1;
+            } else {
+                positions.add(new Pair<>(normalized.mapPosition(start), normalized.mapPosition(end)));
+                start = matchedIndices.get(i);
+                end = start + 1;
+            }
+        }
+        positions.add(new Pair<>(normalized.mapPosition(start), normalized.mapPosition(end)));
+        return positions;
+    }
+
+    private Object createSpan(String highlight, int primaryColor) {
+        switch (highlight) {
+            case "color":
+                return new ForegroundColorSpan(primaryColor);
+            case "bold":
+                return new StyleSpan(Typeface.BOLD);
+            case "italic":
+                return new StyleSpan(Typeface.ITALIC);
+            case "underline":
+                return new UnderlineSpan();
+            default:
+                return null;
+        }
+    }
+
+    public String getSection() {
+        try {
+            // get the normalized first letter of the pojo
+            // Ensure accented characters are never displayed. (É => E)
+            String ch = Character.toString((char) pojo.normalizedName.codePoints[0]);
+            // convert to uppercase otherwise lowercase a -z will be sorted
+            // after upper A-Z
+            return ch.toUpperCase(Locale.getDefault());
+        } catch (ArrayIndexOutOfBoundsException e) {
+            // Normalized name is empty.
+            return "-";
+        }
+    }
+
+    /**
+     * How to display the popup menu
+     *
+     * @return a PopupMenu object
+     */
+    public ListPopup getPopupMenu(final Context context, final RecordAdapter parent, final View parentView) {
+        ArrayAdapter<ListPopup.Item> popupMenuAdapter = new ArrayAdapter<>(context, R.layout.popup_list_item);
+        buildPopupMenu(context, popupMenuAdapter);
+        ListPopup menu = inflatePopupMenu(popupMenuAdapter, context);
+
+        menu.setOnItemClickListener((adapter, view, position) -> {
+            ListPopup.Item item = (ListPopup.Item) adapter.getItem(position);
+            @StringRes int stringId = item.stringId;
+            boolean handled = popupMenuClickHandler(view.getContext(), parent, stringId, parentView);
+            if (!handled && stringId == 0) {
+                ClipboardUtils.setClipboard(view.getContext(), "Copied Text", item.toString());
+                Toast.makeText(context, R.string.copy_confirmation, Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        return menu;
+    }
+
+    /**
+     * Default popup menu implementation, can be overridden by children class to display a more specific menu
+     */
+    protected void buildPopupMenu(Context context, ArrayAdapter<ListPopup.Item> adapter) {
+        if (canRemoveFromHistory(context) && isShowingHistory()) {
+            adapter.add(new ListPopup.Item(context, R.string.menu_remove));
+        }
+        if (isAllowedAsFavorite()) {
+            // If app already pinned, do not display the "add to favorite" option
+            // otherwise don't show the "remove favorite button"
+            if (!KissApplication.getApplication(context).getDataHandler().hasFavorite(this.pojo.getFavoriteId())) {
+                adapter.add(new ListPopup.Item(context, R.string.menu_favorites_add));
+            } else {
+                adapter.add(new ListPopup.Item(context, R.string.menu_favorites_remove));
+            }
+        }
+        IconPack iconPack = KissApplication.getApplication(context).getIconsHandler().getIconPack();
+        // only display this option if we're using a custom icon pack, as it is not useful otherwise
+        if (iconPack.allowForCustomIcons()) {
+            if (canHaveCustomIcon(context, iconPack)) {
+                adapter.add(new ListPopup.Item(context, R.string.menu_custom_icon));
+            }
+        }
+    }
+
+    private boolean isShowingHistory() {
+        return SearchHandler.getInstance().getLastSearchType() == Searcher.Type.HISTORY;
+    }
+
+    private ListPopup inflatePopupMenu(ArrayAdapter<ListPopup.Item> adapter, Context context) {
+        if (BuildConfig.DEBUG) {
+            adapter.add(new ListPopup.Item("Relevance: " + pojo.relevance));
+            adapter.add(new ListPopup.Item("ID: " + pojo.id));
+        }
+
+        ListPopup menu = new ListPopup(context);
+        menu.setAdapter(adapter);
+        return menu;
+    }
+
+    /**
+     * Handler for popup menu action.
+     * Default implementation only handle remove from history action.
+     *
+     * @return Works in the same way as onOptionsItemSelected, return true if the action has been handled, false otherwise
+     */
+    boolean popupMenuClickHandler(Context context, RecordAdapter parent, @StringRes int stringId, View parentView) {
+        if (stringId == R.string.menu_remove) {
+            removeFromResultsAndHistory(context, parent);
+            return true;
+        } else if (stringId == R.string.menu_favorites_add) {
+            launchAddToFavorites(context, pojo);
+            return true;
+        } else if (stringId == R.string.menu_favorites_remove) {
+            launchRemoveFromFavorites(context, pojo);
+            return true;
+        } else if (stringId == R.string.menu_custom_icon) {
+            launchCustomIcon(context, parent);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void launchAddToFavorites(Context context, Pojo pojo) {
+        String msg = context.getResources().getString(R.string.toast_favorites_added);
+        KissApplication.getApplication(context).getDataHandler().addToFavorites(pojo.getFavoriteId());
+        Toast.makeText(context, String.format(msg, pojo.getName()), Toast.LENGTH_SHORT).show();
+    }
+
+    private void launchRemoveFromFavorites(Context context, Pojo pojo) {
+        String msg = context.getResources().getString(R.string.toast_favorites_removed);
+        KissApplication.getApplication(context).getDataHandler().removeFromFavorites(pojo.getFavoriteId());
+        Toast.makeText(context, String.format(msg, pojo.getName()), Toast.LENGTH_SHORT).show();
+    }
+
+    private void launchCustomIcon(Context context, RecordAdapter parent) {
+        //TODO: launch a DialogFragment or Activity
+        CustomIconDialog dialog = new CustomIconDialog();
+        dialog.setOnConfirmListener(componentName -> this.setCustomIcon(context, componentName));
+        parent.showDialog(dialog);
+    }
+
+    private void setCustomIcon(Context context, ComponentName componentName) {
+        KissApplication.getApplication(context).getIconsHandler().setCustomComponent(this, componentName);
+    }
+
+    /**
+     * Remove the current result from the list
+     *
+     * @param context android context
+     * @param parent  adapter on which to remove the item
+     */
+    private void removeFromResultsAndHistory(Context context, RecordAdapter parent) {
+        removeFromHistory(context);
+        Toast.makeText(context, R.string.removed_item, Toast.LENGTH_SHORT).show();
+        parent.removeResult(this);
+    }
+
+    public final void launch(Context context, View v, @Nullable QueryInterface queryInterface) {
+        Log.i(this.getClass().getSimpleName(), "Launching " + pojo.id);
+
+        // Launch
+        doLaunch(context, v);
+
+        recordLaunch(context, queryInterface);
+    }
+
+    protected final void recordLaunch(Context context, @Nullable QueryInterface queryInterface) {
+        // Save in history
+        if (canAddToHistory()) {
+            Pojo recordLaunchPojo = getPojoForRecordLaunch(context);
+            KissApplication.getApplication(context).getDataHandler().addToHistory(recordLaunchPojo.getHistoryId());
+        }
+        // Record the launch after some period,
+        // * to ensure the animation runs smoothly
+        // * to avoid a flickering -- launchOccurred will refresh the list
+        // Thus TOUCH_DELAY * 3
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(() -> {
+            if (queryInterface != null) {
+                queryInterface.launchOccurred();
+            }
+        }, KissApplication.TOUCH_DELAY * 3);
+    }
+
+    @NonNull
+    protected Pojo getPojoForRecordLaunch(Context context) {
+        return pojo;
+    }
+
+    /**
+     * to check if launch can be added to history
+     *
+     * @return true, if launch can be added to history
+     */
+    protected boolean canAddToHistory() {
+        return !pojo.isDisabled();
+    }
+
+    /**
+     * How to launch this record ? Most probably, will fire an intent.
+     *
+     * @param context android context
+     */
+    protected abstract void doLaunch(Context context, View v);
+
+    /**
+     * How to launch this record "quickly" ? Most probably, same as doLaunch().
+     * Override to define another behavior.
+     *
+     * @param context android context
+     */
+    public void fastLaunch(Context context, View v) {
+        this.launch(context, v, null);
+    }
+
+    /**
+     * Return the icon for this Result, or null if nonexisting.
+     *
+     * @param context android context
+     */
+    public Drawable getDrawable(Context context) {
+        return null;
+    }
+
+    boolean isDrawableCached() {
+        return false;
+    }
+
+    void setDrawableCache(Drawable drawable) {
+    }
+
+    public void clearIcon() {
+        setDrawableCache(null);
+    }
+
+    protected void setAsyncDrawable(@NonNull ImageView view) {
+        setAsyncDrawable(view, android.R.color.transparent);
+    }
+
+    protected void setAsyncDrawable(@NonNull ImageView view, @DrawableRes int resId) {
+        setAsyncDrawable(view, resId, false, this::isDrawableCached, this::getDrawable, this::setDrawableCache);
+    }
+
+    protected void setAsyncDrawable(@NonNull ImageView imageView,
+                                    @DrawableRes int defaultResId,
+                                    boolean invalidateDrawable,
+                                    @NonNull Supplier<Boolean> isCachedSupplier,
+                                    @NonNull Function<Context, Drawable> drawableGetter,
+                                    @NonNull Consumer<Drawable> cachedDrawableSetter) {
+        Utilities.AsyncRun<Drawable> taskToCancel = getTask(imageView);
+        if (taskToCancel != null) {
+            if (!taskToCancel.isCancelled()) {
+                taskToCancel.cancel();
+            }
+            imageView.setTag(TAG_RUNNING_TASK, null);
+        }
+
+        if (isCachedSupplier.get()) {
+            imageView.setImageDrawable(drawableGetter.apply(imageView.getContext()));
+            imageView.setTag(TAG_RUNNING_TASK, null);
+        } else {
+            if (defaultResId != 0) {
+                imageView.setImageResource(defaultResId);
+            }
+            Utilities.AsyncRun<Drawable> newTask = Utilities.runAsync((task) -> {
+                if (task.isCancelled()) {
+                    return null;
+                }
+                return drawableGetter.apply(imageView.getContext());
+            }, (task, drawable) -> {
+                if (task.isCancelled() || drawable == null) {
+                    Log.w(TAG, "Cannot set drawable for " + getPojoId());
+                } else {
+                    imageView.setTag(TAG_RUNNING_TASK, null);
+                    cachedDrawableSetter.accept(drawable);
+                    imageView.setImageDrawable(drawable);
+                    if (invalidateDrawable) {
+                        imageView.invalidateDrawable(drawable);
+                    }
+                }
+            });
+            imageView.setTag(TAG_RUNNING_TASK, newTask);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Utilities.AsyncRun<Drawable> getTask(ImageView view) {
+        Object tag = view.getTag(TAG_RUNNING_TASK);
+        return tag instanceof Utilities.AsyncRun ? (Utilities.AsyncRun<Drawable>) tag : null;
+    }
+
+    /**
+     * Helper function to get a view
+     *
+     * @param context android context
+     * @param id      id to inflate
+     * @param parent  view that provides a set of LayoutParams values
+     * @return the view specified by the id
+     */
+    View inflateFromId(Context context, @LayoutRes int id, @NonNull ViewGroup parent) {
+        LayoutInflater inflater = LayoutInflater.from(context);
+        return inflater.inflate(id, parent, false);
+    }
+
+    void removeFromHistory(Context context) {
+        DBHelper.removeFromHistory(context, pojo.getHistoryId());
+    }
+
+    /*
+     * Get fill color from theme
+     *
+     */
+    @ColorInt
+    int getThemeFillColor(Context context) {
+        if (DrawableUtils.hasThemedIcons() &&
+                DrawableUtils.isThemedIconEnabled(context)) {
+            return UIColors.getIconColors(context)[1];
+        } else {
+            return UIColors.getResultColor(context);
+        }
+    }
+
+    @NonNull
+    protected Drawable getThemedDrawable(@NonNull Context context, @NonNull Pojo pojo, @DrawableRes int resId) {
+        return KissApplication.getApplication(context).getIconsHandler().getThemedDrawable(context, pojo, resId, getBackgroundColor(context), getTextColor(context), getThemeFillColor(context), makeThemedIcon());
+    }
+
+    @ColorInt
+    protected int getBackgroundColor(Context context) {
+        if (DrawableUtils.hasThemedIcons() &&
+                DrawableUtils.isThemedIconEnabled(context)) {
+            return UIColors.getIconColors(context)[0];
+        } else {
+            return Color.WHITE;
+        }
+    }
+
+    @ColorInt
+    protected int getTextColor(Context context) {
+        if (DrawableUtils.hasThemedIcons() &&
+                DrawableUtils.isThemedIconEnabled(context)) {
+            return UIColors.getIconColors(context)[1];
+        } else {
+            return UIColors.getPrimaryColor(context);
+        }
+    }
+
+    public long getUniqueId() {
+        // we can consider hashCode unique enough in this context
+        return this.pojo.id.hashCode();
+    }
+
+    protected boolean isHideIcons(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return prefs.getBoolean("icons-hide", false);
+    }
+
+    protected boolean isTagsVisible(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return prefs.getBoolean("tags-visible", true);
+    }
+
+    protected void setSourceBounds(@NonNull Intent intent, @Nullable View view) {
+        intent.setSourceBounds(getViewBounds(view));
+    }
+
+    @Nullable
+    protected Rect getViewBounds(@Nullable View view) {
+        if (view != null) {
+            return view.getClipBounds();
+        }
+        return null;
+    }
+
+    protected void setTranscriptModeAlwaysScroll(RecordAdapter adapter) {
+        // We'll need to reset the list view to its previous transcript mode,
+        // but it has to happen *after* the keyboard is hidden, otherwise scroll will be reset
+        // Let's wait for half a second, that's ugly but we don't have any other option :(
+        final Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(() -> adapter.updateTranscriptMode(AbsListView.TRANSCRIPT_MODE_ALWAYS_SCROLL), 500);
+    }
+
+    protected void setTranscriptModeDisabled(RecordAdapter adapter) {
+        adapter.updateTranscriptMode(AbsListView.TRANSCRIPT_MODE_DISABLED);
+    }
+
+    protected abstract boolean isAllowedAsFavorite();
+
+    protected abstract boolean canRemoveFromHistory(Context context);
+
+    protected abstract boolean canHaveCustomIcon(Context context, IconPack iconPack);
+
+    public final String getCustomIconId() {
+        return pojo.getCustomIconId();
+    }
+
+    /**
+     * @return true, if icon should be put onto shaped background and follow theme colors
+     */
+    protected boolean makeThemedIcon() {
+        return false;
+    }
+}

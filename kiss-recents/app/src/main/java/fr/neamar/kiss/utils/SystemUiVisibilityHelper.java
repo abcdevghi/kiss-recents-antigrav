@@ -1,0 +1,195 @@
+package fr.neamar.kiss.utils;
+
+import static android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+import static android.content.res.Configuration.UI_MODE_NIGHT_NO;
+import static android.content.res.Configuration.UI_MODE_NIGHT_YES;
+
+import android.app.Activity;
+import android.content.SharedPreferences;
+import android.content.res.Resources;
+import android.graphics.Color;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.View;
+
+import androidx.annotation.NonNull;
+import androidx.preference.PreferenceManager;
+
+import fr.neamar.kiss.UIColors;
+
+public class SystemUiVisibilityHelper implements View.OnSystemUiVisibilityChangeListener {
+    private static final String TAG = SystemUiVisibilityHelper.class.getSimpleName();
+    private final Activity mActivity;
+    private final Handler mHandler;
+    private final SharedPreferences prefs;
+    private final boolean hasBlackNotificationIconsForTheme;
+
+    private boolean mKeyboardVisible;
+    private boolean mIsScrolling;
+    private int mPopupCount;
+
+    // This is used to emulate SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+    private final Runnable autoApplySystemUiRunnable = this::autoApplySystemUi;
+
+    private void autoApplySystemUi() {
+        if (!mKeyboardVisible && !mIsScrolling && mPopupCount == 0) {
+            applySystemUi();
+        }
+    }
+
+    public SystemUiVisibilityHelper(@NonNull Activity activity, boolean hasBlackNotificationIconsForTheme) {
+        this.mActivity = activity;
+        this.hasBlackNotificationIconsForTheme = hasBlackNotificationIconsForTheme;
+        this.mHandler = new Handler(Looper.getMainLooper());
+        this.prefs = PreferenceManager.getDefaultSharedPreferences(activity);
+
+        View decorView = mActivity.getWindow()
+                .getDecorView();
+        decorView.setOnSystemUiVisibilityChangeListener(this);
+        mKeyboardVisible = false;
+        mIsScrolling = false;
+        mPopupCount = 0;
+    }
+
+    public void onWindowFocusChanged(boolean hasFocus) {
+        if (hasFocus) {
+            if (mIsScrolling)
+                applyScrollSystemUi();
+            else
+                applySystemUi();
+        }
+    }
+
+    public void onKeyboardVisibilityChanged(boolean isVisible) {
+        mKeyboardVisible = isVisible;
+        if (isVisible) {
+            mHandler.removeCallbacks(autoApplySystemUiRunnable);
+            applySystemUi(false, false, hasBlackNotificationIcons());
+        } else {
+            autoApplySystemUiRunnable.run();
+        }
+    }
+
+    private void applySystemUi() {
+        applySystemUi(isPreferenceHideNavBar(), isPreferenceHideStatusBar(), hasBlackNotificationIcons());
+    }
+
+    private void applySystemUi(boolean hideNavBar, boolean hideStatusBar, boolean hasBlackNotificationIcons) {
+        int visibility = 0;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            // Edge-to-edge is enforced, keep the layout flags or the decor view will be shifted below the system bars
+            visibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+        }
+        if (hideNavBar) {
+            visibility = visibility
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION; // hide nav bar
+        }
+        if (hideStatusBar) {
+            visibility = visibility
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN; // hide status bar
+        }
+        if (hideNavBar || hideStatusBar) {
+            visibility = visibility
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE;
+        }
+        if (hasBlackNotificationIcons) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                visibility = visibility | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            }
+        }
+
+        View decorView = mActivity.getWindow()
+                .getDecorView();
+        decorView.setSystemUiVisibility(visibility);
+    }
+
+    public void applyScrollSystemUi() {
+        mIsScrolling = true;
+        applySystemUi();
+    }
+
+    public void resetScroll() {
+        mIsScrolling = false;
+        if (!mKeyboardVisible)
+            mHandler.post(autoApplySystemUiRunnable);
+    }
+
+    private boolean isPreferenceHideNavBar() {
+        return prefs.getBoolean("pref-hide-navbar", false);
+    }
+
+    private boolean isPreferenceHideStatusBar() {
+        return prefs.getBoolean("pref-hide-statusbar", false);
+    }
+
+    private boolean hasBlackNotificationIcons() {
+        if (hasBlackNotificationIconsForTheme) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                // Edge-to-edge: the toolbar is drawn behind the status bar, so match its text color
+                return UIColors.getTextColorOnPrimary(mActivity) == Color.BLACK;
+            }
+            Resources res = mActivity.getResources();
+            switch ((res.getConfiguration().uiMode & UI_MODE_NIGHT_MASK)) {
+                case UI_MODE_NIGHT_NO:
+                    return true;
+                case UI_MODE_NIGHT_YES:
+                    return false;
+            }
+        }
+        return prefs.getBoolean("black-notification-icons", false);
+    }
+
+    @Override
+    public void onSystemUiVisibilityChange(int visibility) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("onSystemUiVisibilityChange %x", visibility));
+
+        if ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_HIDE_NAVIGATION");
+
+        if ((visibility & View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN");
+        if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_FULLSCREEN");
+
+        if ((visibility & View.SYSTEM_UI_FLAG_IMMERSIVE) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_IMMERSIVE");
+        if ((visibility & View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_IMMERSIVE_STICKY");
+
+        if ((visibility & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) != 0)
+            sb.append("\n SYSTEM_UI_FLAG_LIGHT_STATUS_BAR");
+
+        Log.d(TAG, sb.toString());
+
+        if ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0) {
+            applySystemUi();
+        }
+
+        if (visibility == 0) {
+            mHandler.postDelayed(autoApplySystemUiRunnable, 1000);
+        }
+    }
+
+    public void copyVisibility(View contentView) {
+        View decorView = mActivity.getWindow()
+                .getDecorView();
+        int visibility = decorView.getSystemUiVisibility();
+        contentView.setSystemUiVisibility(visibility);
+    }
+
+    public void addPopup() {
+        mPopupCount += 1;
+    }
+
+    public void popPopup() {
+        mPopupCount -= 1;
+        if (mPopupCount < 0) {
+            Log.e(TAG, "Popup count negative!");
+            mPopupCount = 0;
+        }
+    }
+}

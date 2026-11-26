@@ -1,0 +1,47 @@
+package fr.neamar.kiss.icons;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.graphics.drawable.Drawable;
+
+import androidx.annotation.ColorInt;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import java.util.Map;
+import java.util.Set;
+
+import fr.neamar.kiss.utils.UserHandle;
+
+public interface IconPack {
+
+    @NonNull
+    String getPackPackageName();
+
+    @Nullable
+    Drawable getComponentDrawable(@NonNull Context ctx, @NonNull ComponentName componentName, @NonNull UserHandle userHandle);
+
+    @NonNull
+    Drawable applyBackgroundAndMask(@NonNull Context ctx, @NonNull Drawable icon, boolean fitInside, @ColorInt int backgroundColor);
+
+    void loadDrawables(@NonNull Context ctx);
+
+    @Nullable
+    Map<ComponentName, Set<DrawableInfo>> getDrawablesByComponent();
+
+    @Nullable
+    Drawable getDrawable(@NonNull Context context, @NonNull DrawableInfo drawableInfo);
+
+    /**
+     * @return true if the icon changes over time (calendars showing the date)
+     */
+    boolean hasDynamicIcon(@NonNull ComponentName componentName);
+
+    boolean allowForCustomIcons();
+
+    boolean isSystemIconPack();
+
+    boolean isLoaded();
+
+    boolean hasMask();
+}

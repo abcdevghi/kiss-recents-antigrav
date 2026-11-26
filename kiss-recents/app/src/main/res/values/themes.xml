@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="BaseTheme" parent="@style/Theme.Material3.DayNight.NoActionBar">
+        <item name="colorSurface">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceBright">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceContainerLowest">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceContainerLow">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceContainer">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceContainerHigh">@color/theme_solid_list_background_color</item>
+        <item name="colorSurfaceContainerHighest">@color/theme_solid_list_background_color</item>
+    </style>
+
+    <style name="AppTheme" parent="BaseTheme">
+        <item name="colorPrimary">@color/kiss_green</item>
+        <item name="colorPrimaryDark">@color/kiss_green_dark</item>
+        <item name="colorAccent">@color/kiss_green</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="appSelectableItemBackground">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="textShadowRadius">0</item>
+        <item name="kiss_icon_background">@color/kiss_icon_background</item>
+        <item name="kiss_icon_foreground">@color/kiss_icon_foreground</item>
+        <item name="kiss_notification_dot_color">@color/kiss_notification_dot_color</item>
+        <item name="popupMenuStyle">@style/AppTheme.PopupMenu</item>
+        <item name="android:popupMenuStyle">@style/AppTheme.PopupMenu</item>
+        <item name="popupMenuBackground">?attr/colorSurfaceContainerHigh</item>
+        <item name="dialogTheme">@style/AppTheme.Dialog</item>
+        <item name="android:dialogTheme">@style/AppTheme.Dialog</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="dividerDrawable">@drawable/list_separator</item>
+        <item name="android:textColor">@color/theme_solid_text_color</item>
+        <item name="android:textColorPrimary">@color/theme_solid_text_color</item>
+        <item name="android:textColorSecondary">@color/theme_solid_text_color_secondary</item>
+        <item name="android:textColorTertiary">@color/theme_solid_text_color_tertiary</item>
+        <item name="searchColor">@color/theme_solid_search_color</item>
+        <item name="resultColor">@color/theme_solid_result_color</item>
+        <item name="resultSecondaryColor">@color/theme_solid_text_color_secondary</item>
+        <item name="resultShadowColor">@color/theme_solid_result_shadow_color</item>
+        <item name="listBackgroundColor">@color/theme_solid_list_background_color</item>
+        <item name="searchBackgroundColor">@color/theme_solid_search_background_color</item>
+        <item name="searchBackgroundOutline">@android:color/transparent</item>
+    </style>
+
+    <style name="AppThemeAmoledDark" parent="AppTheme">
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="dividerDrawable">@null</item>
+        <item name="searchColor">@android:color/white</item>
+        <item name="resultColor">@android:color/white</item>
+        <item name="resultShadowColor">@android:color/black</item>
+        <item name="listBackgroundColor">@android:color/black</item>
+        <item name="searchBackgroundColor">@android:color/black</item>
+        <item name="searchBackgroundOutline">@android:color/white</item>
+    </style>
+
+    <style name="AppThemeTransparent" parent="AppTheme">
+        <item name="dividerDrawable">@null</item>
+        <item name="colorPrimaryDark">@android:color/transparent</item>
+        <item name="textShadowRadius">3</item>
+        <item name="listBackgroundColor">@android:color/transparent</item>
+        <item name="resultColor">@color/theme_transparent_result_color</item>
+        <item name="resultSecondaryColor">@color/theme_transparent_result_color</item>
+        <item name="resultShadowColor">@color/theme_transparent_result_shadow_color</item>
+    </style>
+
+    <style name="AppThemeSemiTransparent" parent="AppTheme">
+        <item name="dividerDrawable">@null</item>
+        <item name="textShadowRadius">3</item>
+        <item name="resultColor">@color/theme_semi_transparent_result_color</item>
+        <item name="listBackgroundColor">@color/theme_semi_transparent_list_background_color</item>
+        <item name="searchBackgroundColor">@color/theme_semi_transparent_search_background_color</item>
+    </style>
+
+    <style name="SettingTheme" parent="AppTheme">
+        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowBackground">@color/setting_theme_window_background</item>
+        <item name="android:textColor">@color/setting_theme_text_primary</item>
+        <item name="android:textColorPrimary">@color/setting_theme_text_primary</item>
+        <item name="android:textColorSecondary">@color/setting_theme_text_secondary</item>
+    </style>
+
+    <style name="SettingThemeAmoledDark" parent="AppThemeAmoledDark">
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <!-- Amoled is always night mode, so these are the light grey variants -->
+        <item name="android:textColor">@color/setting_theme_text_primary</item>
+        <item name="android:textColorPrimary">@color/setting_theme_text_primary</item>
+        <item name="android:textColorSecondary">@color/setting_theme_text_secondary</item>
+    </style>
+
+    <style name="AppTheme.PopupMenu" parent="@style/Widget.Material3.PopupMenu"></style>
+
+    <style name="AppTheme.Dialog" parent="@style/Theme.Material3.DayNight.Dialog">
+        <item name="android:windowBackground">?attr/colorSurfaceContainerHigh</item>
+    </style>
+
+    <style name="OverlayShadowDisabled">
+        <item name="textShadowRadius">0</item>
+    </style>
+
+    <style name="OverlayShadowEnabled">
+        <item name="textShadowRadius">3</item>
+    </style>
+
+    <style name="OverlaySeparatorDisabled">
+        <item name="dividerDrawable">@null</item>
+    </style>
+
+    <style name="OverlaySeparatorLight">
+        <item name="dividerDrawable">@drawable/list_separator_light</item>
+    </style>
+
+    <style name="OverlaySeparatorDark">
+        <item name="dividerDrawable">@drawable/list_separator_dark</item>
+    </style>
+
+    <style name="OverlayResultColorLight">
+        <item name="resultColor">@android:color/black</item>
+    </style>
+
+    <style name="OverlayResultColorSemiLight">
+        <item name="resultColor">@android:color/black</item>
+    </style>
+
+    <style name="OverlayResultColorDark">
+        <item name="resultColor">@color/kiss_text_on_dark</item>
+    </style>
+
+    <style name="OverlayResultColorSemiDark">
+        <item name="resultColor">@color/kiss_text_on_semi_dark</item>
+    </style>
+
+    <style name="OverlayResultColorBlack">
+        <item name="resultColor">@android:color/white</item>
+    </style>
+
+
+    <style name="OverlayWallpaperEnabled">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+    </style>
+
+    <style name="OverlayWallpaperDisabled">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
+
+    <style name="OverlayWallpaperDisabledLight">
+        <item name="android:windowBackground">@color/kiss_background</item>
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
+
+    <style name="OverlayResultSizeLargest">
+        <item name="resultHeight">@dimen/result_height_largest</item>
+        <item name="resultIconSize">@dimen/result_icon_size_largest</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size_largest</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size_largest</item>
+        <item name="resultTitleSize">@dimen/result_title_size_largest</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size_largest</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size_largest</item>
+    </style>
+
+    <style name="OverlayResultSizeLarge">
+        <item name="resultHeight">@dimen/result_height_large</item>
+        <item name="resultIconSize">@dimen/result_icon_size_large</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size_large</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size_large</item>
+        <item name="resultTitleSize">@dimen/result_title_size_large</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size_large</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size_large</item>
+    </style>
+
+    <style name="OverlayResultSizeStandard">
+        <item name="resultHeight">@dimen/result_height</item>
+        <item name="resultIconSize">@dimen/result_icon_size</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size</item>
+        <item name="resultTitleSize">@dimen/result_title_size</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size</item>
+    </style>
+
+    <style name="OverlayResultSizeMedium">
+        <item name="resultHeight">@dimen/result_height_medium</item>
+        <item name="resultIconSize">@dimen/result_icon_size_medium</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size_medium</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size_medium</item>
+        <item name="resultTitleSize">@dimen/result_title_size_medium</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size_medium</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size_medium</item>
+    </style>
+
+    <style name="OverlayResultSizeSmall">
+        <item name="resultHeight">@dimen/result_height_small</item>
+        <item name="resultIconSize">@dimen/result_icon_size_small</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size_small</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size_small</item>
+        <item name="resultTitleSize">@dimen/result_title_size_small</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size_small</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size_small</item>
+    </style>
+
+    <style name="OverlayResultSizeSmallest">
+        <item name="resultHeight">@dimen/result_height_smallest</item>
+        <item name="resultIconSize">@dimen/result_icon_size_smallest</item>
+        <item name="resultSubIconSize">@dimen/result_subicon_size_smallest</item>
+        <item name="resultNotificationDotSize">@dimen/result_notification_dot_size_smallest</item>
+        <item name="resultTitleSize">@dimen/result_title_size_smallest</item>
+        <item name="resultSubtitleSize">@dimen/result_subtitle_size_smallest</item>
+        <item name="resultButtonHeight">@dimen/result_icon_size_smallest</item>
+    </style>
+
+    <style name="OverlayResultSizeNoIcons">
+        <item name="resultIconSize">?attr/resultNotificationDotSize</item>
+    </style>
+
+    <style name="OverlayBarColorLight">
+        <item name="searchBackgroundColor">@color/kiss_background</item>
+    </style>
+
+    <style name="OverlayBarColorSemiLight">
+        <item name="searchBackgroundColor">@color/kiss_background_light_transparent</item>
+    </style>
+
+    <style name="OverlayBarColorDark">
+        <item name="searchBackgroundColor">@color/kiss_background_inverse</item>
+    </style>
+
+    <style name="OverlayBarColorSemiDark">
+        <item name="searchBackgroundColor">@color/kiss_background_dark_transparent</item>
+    </style>
+
+    <style name="OverlayBarColorBlack">
+        <item name="searchBackgroundColor">@android:color/black</item>
+    </style>
+
+    <!-- colorPrimaryDark is always same color as colorPrimary in HSV color space where value was reduced by 15 -->
+    <!-- kiss_icon_foreground is always same color as colorPrimary in HSV color space where saturation was reduced by 10 -->
+    <style name="OverlayAccentDefault">
+        <item name="colorPrimary">@color/kiss_green</item>
+        <item name="colorPrimaryDark">@color/kiss_green_dark</item>
+        <item name="colorAccent">@color/kiss_green</item>
+        <item name="kiss_icon_foreground">#5daf61</item>
+        <item name="kiss_icon_background">@color/kiss_icon_background_neutral</item>
+    </style>
+
+    <style name="OverlayAccentD32F2F" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#D32F2F</item>
+        <item name="colorPrimaryDark">#ad2626</item>
+        <item name="colorAccent">#D32F2F</item>
+        <item name="kiss_icon_foreground">#d34444</item>
+    </style>
+
+    <style name="OverlayAccentC2185B" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#C2185B</item>
+        <item name="colorPrimaryDark">#9c1349</item>
+        <item name="colorAccent">#C2185B</item>
+        <item name="kiss_icon_foreground">#c22b67</item>
+    </style>
+
+    <style name="OverlayAccent7B1FA2" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#7B1FA2</item>
+        <item name="colorPrimaryDark">#5e187c</item>
+        <item name="colorAccent">#7B1FA2</item>
+        <item name="kiss_icon_foreground">#802fa2</item>
+    </style>
+
+    <style name="OverlayAccent512DA8" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#512DA8</item>
+        <item name="colorPrimaryDark">#3f2382</item>
+        <item name="colorAccent">#512DA8</item>
+        <item name="kiss_icon_foreground">#5d3ea8</item>
+    </style>
+
+    <style name="OverlayAccent303F9F" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#303F9F</item>
+        <item name="colorPrimaryDark">#243079</item>
+        <item name="colorAccent">#303F9F</item>
+        <item name="kiss_icon_foreground">#404d9f</item>
+    </style>
+
+    <style name="OverlayAccent1976D2" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#1976D2</item>
+        <item name="colorPrimaryDark">#1461ac</item>
+        <item name="colorAccent">#1976D2</item>
+        <item name="kiss_icon_foreground">#2e80d2</item>
+    </style>
+
+    <style name="OverlayAccent0288D1" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#0288D1</item>
+        <item name="colorPrimaryDark">#026fab</item>
+        <item name="colorAccent">#0288D1</item>
+        <item name="kiss_icon_foreground">#178fd1</item>
+    </style>
+
+    <style name="OverlayAccent0097A7" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#0097A7</item>
+        <item name="colorPrimaryDark">#007481</item>
+        <item name="colorAccent">#0097A7</item>
+        <item name="kiss_icon_foreground">#1199a7</item>
+    </style>
+
+    <style name="OverlayAccent00796B" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#00796B</item>
+        <item name="colorPrimaryDark">#005349</item>
+        <item name="colorAccent">#00796B</item>
+        <item name="kiss_icon_foreground">#0c796c</item>
+    </style>
+
+    <style name="OverlayAccent388E3C" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#388E3C</item>
+        <item name="colorPrimaryDark">#29682c</item>
+        <item name="colorAccent">#388E3C</item>
+        <item name="kiss_icon_foreground">#468e49</item>
+    </style>
+
+    <style name="OverlayAccent689F38" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#689F38</item>
+        <item name="colorPrimaryDark">#4f792b</item>
+        <item name="colorAccent">#689F38</item>
+        <item name="kiss_icon_foreground">#709f48</item>
+    </style>
+
+    <style name="OverlayAccentAFB42B" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#AFB42B</item>
+        <item name="colorPrimaryDark">#8a8e22</item>
+        <item name="colorAccent">#AFB42B</item>
+        <item name="kiss_icon_foreground">#b0b43d</item>
+    </style>
+
+    <style name="OverlayAccentFBC02D" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#FBC02D</item>
+        <item name="colorPrimaryDark">#d5a326</item>
+        <item name="colorAccent">#FBC02D</item>
+        <item name="kiss_icon_foreground">#fbc746</item>
+    </style>
+
+    <style name="OverlayAccentFFA000" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#FFA000</item>
+        <item name="colorPrimaryDark">#d98800</item>
+        <item name="colorAccent">#FFA000</item>
+        <item name="kiss_icon_foreground">#ffaa1a</item>
+    </style>
+
+    <style name="OverlayAccentF57C00" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#F57C00</item>
+        <item name="colorPrimaryDark">#cf6900</item>
+        <item name="colorAccent">#F57C00</item>
+        <item name="kiss_icon_foreground">#f58819</item>
+    </style>
+
+    <style name="OverlayAccentE64A19" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#E64A19</item>
+        <item name="colorPrimaryDark">#c03e15</item>
+        <item name="colorAccent">#E64A19</item>
+        <item name="kiss_icon_foreground">#e65c30</item>
+    </style>
+
+    <style name="OverlayAccent5D4037" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#5D4037</item>
+        <item name="colorPrimaryDark">#372620</item>
+        <item name="colorAccent">#5D4037</item>
+        <item name="kiss_icon_foreground">#5d4740</item>
+    </style>
+
+    <style name="OverlayAccent616161" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#616161</item>
+        <item name="colorPrimaryDark">#3b3b3b</item>
+        <item name="colorAccent">#616161</item>
+        <item name="kiss_icon_foreground">#616161</item>
+    </style>
+
+    <style name="OverlayAccent455A64" parent="OverlayAccentDefault">
+        <item name="colorPrimary">#455A64</item>
+        <item name="colorPrimaryDark">#2b383e</item>
+        <item name="colorAccent">#455A64</item>
+        <item name="kiss_icon_foreground">#4f5d64</item>
+    </style>
+
+    <style name="OverlayAccent000000" parent="OverlayAccentDefault">
+        <item name="kiss_icon_foreground">#000000</item>
+    </style>
+
+    <style name="OverlayAccentTransparent">
+        <item name="colorPrimary">#FFBDBDBD</item>
+        <item name="colorPrimaryDark">#FF979797</item>
+        <item name="colorAccent">#FFBDBDBD</item>
+    </style>
+
+    <style name="OverlayAccentDarkTransparent">
+        <item name="colorPrimary">#AA000000</item>
+        <item name="colorPrimaryDark">#AA000000</item>
+        <item name="colorAccent">#AA000000</item>
+    </style>
+
+    <style name="OverlayAccentLightTransparent">
+        <item name="colorPrimary">#FFBDBDBD</item>
+        <item name="colorPrimaryDark">#FF979797</item>
+        <item name="colorAccent">#FFBDBDBD</item>
+    </style>
+
+    <style name="OverlayAccentSystem" parent="OverlayAccentDefault">
+    </style>
+</resources>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <issue id="StaticFieldLeak" severity="error" />
+    <issue id="UnusedAttribute" severity="informational" />
+    <issue id="SyntheticAccessor" severity="ignore" />
+    <issue id="MergeRootFrame" severity="ignore" />
+    <issue id="WrongThreadInterprocedural" severity="error"/>
+    <issue id="LogConditional" severity="error" />
+
+    <!-- reduce warnings related to translations -->
+    <issue id="Typos" severity="ignore" />
+    <issue id="TypographyQuotes" severity="ignore" />
+    <issue id="DuplicateStrings" severity="ignore" />
+
+    <!-- ignore until kotlin is in use -->
+    <issue id="UnknownNullness" severity="ignore" />
+</lint>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:title="@string/activity_setting">
+    <fr.neamar.kiss.preference.RootModeSwitch
+        app:defaultValue="false"
+        app:key="root-mode"
+        app:summary="@string/root_mode_desc"
+        app:title="@string/root_mode_name" />
+    <Preference
+        app:key="import-appearance"
+        app:summary="@string/import_appearance_summary"
+        app:title="@string/import_appearance_title" />
+</PreferenceScreen>

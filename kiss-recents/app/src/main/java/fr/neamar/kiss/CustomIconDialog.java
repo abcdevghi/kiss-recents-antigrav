@@ -1,0 +1,337 @@
+package fr.neamar.kiss;
+
+import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
+import android.os.AsyncTask;
+import android.os.Bundle;
+import android.text.TextUtils;
+import android.view.*;
+import android.widget.ImageView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.DialogFragment;
+import androidx.recyclerview.widget.RecyclerView;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import fr.neamar.kiss.icons.DrawableInfo;
+import fr.neamar.kiss.icons.IconPack;
+import fr.neamar.kiss.normalizer.StringNormalizer;
+import fr.neamar.kiss.utils.TrimmingTextChangedListener;
+import fr.neamar.kiss.utils.Utilities;
+import fr.neamar.kiss.utils.fuzzy.FuzzyScore;
+
+public class CustomIconDialog extends DialogFragment {
+    private final List<IconData> mIconData = new ArrayList<>();
+    private ComponentName mSelectedDrawable = null;
+    private RecyclerView mIconView;
+    private TextView mSearch;
+    private ImageView mPreview;
+    private TextView mPreviewText;
+    private OnDismissListener mOnDismissListener = null;
+    private OnConfirmListener mOnConfirmListener = null;
+    private Utilities.AsyncRun<Void> mLoadIconsPackTask = null;
+
+    public interface OnDismissListener {
+        void onDismiss(@NonNull CustomIconDialog dialog);
+    }
+
+    public interface OnConfirmListener {
+        void onConfirm(@Nullable ComponentName componentName);
+    }
+
+    public void setOnDismissListener(OnDismissListener listener) {
+        mOnDismissListener = listener;
+    }
+
+    public void setOnConfirmListener(OnConfirmListener listener) {
+        mOnConfirmListener = listener;
+    }
+
+    @Override
+    public void onDismiss(@NonNull DialogInterface dialog) {
+        cancelLoadIconsPackTask();
+        if (mOnDismissListener != null)
+            mOnDismissListener.onDismiss(this);
+        super.onDismiss(dialog);
+    }
+
+    @Nullable
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+        View root = inflater.inflate(R.layout.custom_icon_dialog, container, false);
+        getDialog().requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        getDialog().getWindow().addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        getDialog().setCanceledOnTouchOutside(true);
+
+        return root;
+    }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        Context context = getDialog().getContext();
+
+        view.setClipToOutline(true);
+
+        mIconView = view.findViewById(R.id.iconView);
+        IconAdapter iconAdapter = new IconAdapter(mIconData);
+        mIconView.setAdapter(iconAdapter);
+        mIconView.setHasFixedSize(true);
+
+        iconAdapter.setOnItemClickListener((iconData) -> {
+            mSelectedDrawable = iconData.componentName;
+            mPreview.setImageDrawable(iconData.getIcon(requireContext()));
+            mPreviewText.setText(mSelectedDrawable.flattenToString());
+        });
+
+        mSearch = view.findViewById(R.id.search);
+        mSearch.addTextChangedListener(new TrimmingTextChangedListener(false, changedText -> mSearch.post(this::refreshList)));
+
+        IconsHandler iconsHandler = KissApplication.getApplication(context).getIconsHandler();
+
+        mPreview = view.findViewById(R.id.preview);
+        mPreviewText = view.findViewById(android.R.id.text1);
+
+        // Default button
+        {
+            View button = view.findViewById(android.R.id.button3);
+            button.setOnClickListener(v -> {
+                cancelLoadIconsPackTask();
+                if (mOnConfirmListener != null) {
+                    mOnConfirmListener.onConfirm(null);
+                }
+                dismiss();
+            });
+        }
+
+        // OK button
+        {
+            View button = view.findViewById(android.R.id.button1);
+            button.setOnClickListener(v -> {
+                cancelLoadIconsPackTask();
+                if (mOnConfirmListener != null) {
+                    mOnConfirmListener.onConfirm(mSelectedDrawable);
+                }
+                dismiss();
+            });
+        }
+
+        // CANCEL button
+        {
+            View button = view.findViewById(android.R.id.button2);
+            button.setOnClickListener(v -> dismiss());
+        }
+
+        // set selected to default icon
+        {
+            mSelectedDrawable = null;
+            mPreview.setImageDrawable(null);
+            mPreviewText.setText(null);
+        }
+
+        IconPack iconPack = iconsHandler.getIconPack();
+        cancelLoadIconsPackTask();
+        mLoadIconsPackTask = Utilities.runAsync((task) -> {
+            if (!task.isCancelled() && task == mLoadIconsPackTask) {
+                iconPack.loadDrawables(context);
+            }
+            return null;
+        }, (task, result) -> {
+            if (!task.isCancelled() && task == mLoadIconsPackTask) {
+                Activity activity = Utilities.getActivity(context);
+                if (activity != null)
+                    refreshList();
+            }
+        });
+    }
+
+    protected void refreshList() {
+        mIconData.clear();
+        IconsHandler iconsHandler = KissApplication.getApplication(requireContext()).getIconsHandler();
+        IconPack iconPack = iconsHandler.getIconPack();
+        Map<ComponentName, Set<DrawableInfo>> drawables = iconPack.getDrawablesByComponent();
+        if (drawables != null) {
+            CharSequence searchText = mSearch.getText();
+            StringNormalizer.Result normalized = StringNormalizer.normalizeWithResult(searchText, true);
+            FuzzyScore fuzzyScore = new FuzzyScore(normalized.codePoints, false);
+            drawables.entrySet().forEach(entry -> {
+                ComponentName componentName = entry.getKey();
+                entry.getValue().forEach(info -> {
+                    if (TextUtils.isEmpty(searchText) ||
+                            fuzzyScore.match(info.getTextForSearch()).match)
+                        mIconData.add(new IconData(iconPack, componentName, info));
+                });
+            });
+        }
+        mIconData.sort(Comparator.comparing(iconData -> iconData.componentName));
+        mIconView.getAdapter().notifyDataSetChanged();
+    }
+
+    private static class IconData {
+        final DrawableInfo drawableInfo;
+        final IconPack iconPack;
+        final ComponentName componentName;
+
+        IconData(IconPack iconPack, ComponentName componentName, DrawableInfo drawableInfo) {
+            this.iconPack = iconPack;
+            this.componentName = componentName;
+            this.drawableInfo = drawableInfo;
+        }
+
+        Drawable getIcon(Context context) {
+            return iconPack.getDrawable(context, drawableInfo);
+        }
+    }
+
+    private static class IconAdapter extends RecyclerView.Adapter<IconAdapter.ViewHolder> {
+        private final List<IconData> mIcons;
+        private OnItemClickListener mOnItemClickListener = null;
+
+        public interface OnItemClickListener {
+            void onItemClick(IconData iconData);
+        }
+
+        IconAdapter(@NonNull List<IconData> objects) {
+            mIcons = objects;
+        }
+
+        void setOnItemClickListener(OnItemClickListener listener) {
+            mOnItemClickListener = listener;
+        }
+
+        private IconData getItem(int position) {
+            return mIcons.get(position);
+        }
+
+
+        @NonNull
+        @Override
+        public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            final View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.custom_icon_item, parent, false);
+            return new ViewHolder(view);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            IconData content = getItem(position);
+            holder.setContent(content);
+
+            holder.icon.setOnClickListener(v -> {
+                if (mOnItemClickListener != null) {
+                    mOnItemClickListener.onItemClick(content);
+                }
+            });
+            holder.icon.setOnLongClickListener(v -> {
+                displayToast(v, content.componentName.flattenToString());
+                return true;
+            });
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return getItem(position).hashCode();
+        }
+
+        @Override
+        public int getItemCount() {
+            return mIcons.size();
+        }
+
+        /**
+         * @param v       is the Button view that you want the Toast to appear above
+         * @param message is the string for the message
+         */
+
+        private void displayToast(View v, CharSequence message) {
+            int xOffset = 0;
+            int yOffset = 0;
+            Rect gvr = new Rect();
+
+            if (v.getGlobalVisibleRect(gvr)) {
+                View root = v.getRootView();
+
+                int halfWidth = root.getRight() / 2;
+                int halfHeight = root.getBottom() / 2;
+
+                int parentCenterX = (gvr.width() / 2) + gvr.left;
+
+                int parentCenterY = (gvr.height() / 2) + gvr.top;
+
+                if (parentCenterY <= halfHeight) {
+                    yOffset = -(halfHeight - parentCenterY);
+                } else {
+                    yOffset = (parentCenterY - halfHeight);
+                }
+
+                if (parentCenterX < halfWidth) {
+                    xOffset = -(halfWidth - parentCenterX);
+                }
+
+                if (parentCenterX >= halfWidth) {
+                    xOffset = parentCenterX - halfWidth;
+                }
+            }
+
+            Toast toast = Toast.makeText(v.getContext(), message, Toast.LENGTH_SHORT);
+            toast.setGravity(Gravity.CENTER, xOffset, yOffset + v.getHeight());
+            toast.show();
+        }
+
+        static class ViewHolder extends RecyclerView.ViewHolder {
+            protected final ImageView icon;
+            protected Utilities.AsyncRun<Drawable> loader = null;
+
+            ViewHolder(View itemView) {
+                super(itemView);
+                itemView.setTag(this);
+                icon = itemView.findViewById(android.R.id.icon);
+            }
+
+            public void setContent(IconData content) {
+                if (loader != null) {
+                    loader.cancel(true);
+                    loader = null;
+                }
+
+                this.icon.setImageDrawable(null);
+                // use AsyncTask.SERIAL_EXECUTOR explicitly for now
+                // TODO: make execution parallel if needed/possible
+                loader = Utilities.runAsync((task) -> {
+                    if (task.isCancelled()) {
+                        return null;
+                    }
+                    return content.getIcon(itemView.getContext());
+                }, (task, drawable) -> {
+                    if (!task.isCancelled() && task == loader) {
+                        icon.setImageDrawable(drawable);
+                    }
+                }, AsyncTask.SERIAL_EXECUTOR);
+            }
+        }
+    }
+
+    /**
+     * Cancel running {@link CustomIconDialog#mLoadIconsPackTask} and set to null.
+     */
+    private void cancelLoadIconsPackTask() {
+        if (mLoadIconsPackTask != null) {
+            mLoadIconsPackTask.cancel();
+            mLoadIconsPackTask = null;
+        }
+    }
+
+}

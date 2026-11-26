@@ -1,0 +1,366 @@
+package fr.neamar.kiss;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.res.TypedArray;
+import android.graphics.Color;
+import android.os.Build;
+import android.view.Window;
+import android.view.WindowManager;
+
+import androidx.annotation.AttrRes;
+import androidx.annotation.ColorInt;
+import androidx.annotation.ColorRes;
+import androidx.annotation.NonNull;
+import androidx.annotation.StyleableRes;
+import androidx.core.content.ContextCompat;
+import androidx.core.graphics.ColorUtils;
+import androidx.preference.PreferenceManager;
+
+import com.google.android.material.color.DynamicColors;
+import com.google.android.material.color.DynamicColorsOptions;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class UIColors {
+    public static final int COLOR_DEFAULT = 0xFF4CAF50;
+
+    public static final int COLOR_TRANSPARENT = 0x00000000;
+    public static final int COLOR_LIGHT_TRANSPARENT = 0xAAFFFFFF;
+    public static final int COLOR_DARK_TRANSPARENT = 0xAA000000;
+    public static final int COLOR_SYSTEM = 0x00FFFFFF;
+
+    // Source: https://material.io/guidelines/style/color.html#color-color-palette
+    private static final int[] COLOR_LIST = new int[]{
+            COLOR_DEFAULT,
+            0xFFD32F2F,
+            0xFFC2185B,
+            0xFF7B1FA2,
+            0xFF512DA8,
+            0xFF303F9F,
+            0xFF1976D2,
+            0xFF0288D1,
+            0xFF0097A7,
+            0xFF00796B,
+            0xFF388E3C,
+            0xFF689F38,
+            0xFFAFB42B,
+            0xFFFBC02D,
+            0xFFFFA000,
+            0xFFF57C00,
+            0xFFE64A19,
+            0xFF5D4037,
+            0xFF616161,
+            0xFF455A64,
+            0xFF000000
+    };
+
+    private static final Map<Integer, Integer> OVERLAY_MAP;
+
+    private static final String COLOR_DEFAULT_STR = colorToString(COLOR_DEFAULT);
+
+    @ColorInt
+    private static int primaryColor = -1;
+
+    static {
+        // initialize color map
+        OVERLAY_MAP = new HashMap<>();
+        OVERLAY_MAP.put(COLOR_DEFAULT, R.style.OverlayAccentDefault);
+        OVERLAY_MAP.put(0xFFD32F2F, R.style.OverlayAccentD32F2F);
+        OVERLAY_MAP.put(0xFFC2185B, R.style.OverlayAccentC2185B);
+        OVERLAY_MAP.put(0xFF7B1FA2, R.style.OverlayAccent7B1FA2);
+        OVERLAY_MAP.put(0xFF512DA8, R.style.OverlayAccent512DA8);
+        OVERLAY_MAP.put(0xFF303F9F, R.style.OverlayAccent303F9F);
+        OVERLAY_MAP.put(0xFF1976D2, R.style.OverlayAccent1976D2);
+        OVERLAY_MAP.put(0xFF0288D1, R.style.OverlayAccent0288D1);
+        OVERLAY_MAP.put(0xFF0097A7, R.style.OverlayAccent0097A7);
+        OVERLAY_MAP.put(0xFF00796B, R.style.OverlayAccent00796B);
+        OVERLAY_MAP.put(0xFF388E3C, R.style.OverlayAccent388E3C);
+        OVERLAY_MAP.put(0xFF689F38, R.style.OverlayAccent689F38);
+        OVERLAY_MAP.put(0xFFAFB42B, R.style.OverlayAccentAFB42B);
+        OVERLAY_MAP.put(0xFFFBC02D, R.style.OverlayAccentFBC02D);
+        OVERLAY_MAP.put(0xFFFFA000, R.style.OverlayAccentFFA000);
+        OVERLAY_MAP.put(0xFFF57C00, R.style.OverlayAccentF57C00);
+        OVERLAY_MAP.put(0xFFE64A19, R.style.OverlayAccentE64A19);
+        OVERLAY_MAP.put(0xFF5D4037, R.style.OverlayAccent5D4037);
+        OVERLAY_MAP.put(0xFF616161, R.style.OverlayAccent616161);
+        OVERLAY_MAP.put(0xFF455A64, R.style.OverlayAccent455A64);
+        OVERLAY_MAP.put(0xFF000000, R.style.OverlayAccent000000);
+        OVERLAY_MAP.put(COLOR_TRANSPARENT, R.style.OverlayAccentTransparent);
+        OVERLAY_MAP.put(COLOR_LIGHT_TRANSPARENT, R.style.OverlayAccentLightTransparent);
+        OVERLAY_MAP.put(COLOR_DARK_TRANSPARENT, R.style.OverlayAccentDarkTransparent);
+        OVERLAY_MAP.put(COLOR_SYSTEM, R.style.OverlayAccentSystem);
+    }
+
+    // https://stackoverflow.com/questions/25815769/how-to-really-programmatically-change-primary-and-accent-color-in-android-loll
+    public static void applyOverlay(Activity activity, SharedPreferences prefs) {
+        applyAccentColor(activity);
+
+        String shadowStyle = prefs.getString("theme-shadow", "default");
+        switch (shadowStyle) {
+            case "enabled":
+                activity.getTheme().applyStyle(R.style.OverlayShadowEnabled, true);
+                break;
+            case "disabled":
+                activity.getTheme().applyStyle(R.style.OverlayShadowDisabled, true);
+                break;
+        }
+
+        String separatorStyle = prefs.getString("theme-separator", "default");
+        switch (separatorStyle) {
+            case "disabled":
+                activity.getTheme().applyStyle(R.style.OverlaySeparatorDisabled, true);
+                break;
+            case "light":
+                activity.getTheme().applyStyle(R.style.OverlaySeparatorLight, true);
+                break;
+            case "dark":
+                activity.getTheme().applyStyle(R.style.OverlaySeparatorDark, true);
+                break;
+        }
+
+        String resultColorStyle = prefs.getString("theme-result-color", "default");
+        switch (resultColorStyle) {
+            case "light":
+                activity.getTheme().applyStyle(R.style.OverlayResultColorLight, true);
+                break;
+            case "dark":
+                activity.getTheme().applyStyle(R.style.OverlayResultColorDark, true);
+                break;
+            case "semi-light":
+                activity.getTheme().applyStyle(R.style.OverlayResultColorSemiLight, true);
+                break;
+            case "semi-dark":
+                activity.getTheme().applyStyle(R.style.OverlayResultColorSemiDark, true);
+                break;
+            case "black":
+                activity.getTheme().applyStyle(R.style.OverlayResultColorBlack, true);
+                break;
+        }
+
+        String wallpaperStyle = prefs.getString("theme-wallpaper", "default");
+        switch (wallpaperStyle) {
+            case "enabled":
+                activity.getTheme().applyStyle(R.style.OverlayWallpaperEnabled, true);
+                break;
+            case "disabled":
+                activity.getTheme().applyStyle(R.style.OverlayWallpaperDisabled, true);
+                break;
+            case "disabled-light":
+                activity.getTheme().applyStyle(R.style.OverlayWallpaperDisabledLight, true);
+                break;
+        }
+
+        String barColor = prefs.getString("theme-bar-color", "default");
+        switch (barColor) {
+            case "light":
+                activity.getTheme().applyStyle(R.style.OverlayBarColorLight, true);
+                break;
+            case "dark":
+                activity.getTheme().applyStyle(R.style.OverlayBarColorDark, true);
+                break;
+            case "semi-light":
+                activity.getTheme().applyStyle(R.style.OverlayBarColorSemiLight, true);
+                break;
+            case "semi-dark":
+                activity.getTheme().applyStyle(R.style.OverlayBarColorSemiDark, true);
+                break;
+            case "black":
+                activity.getTheme().applyStyle(R.style.OverlayBarColorBlack, true);
+                break;
+        }
+    }
+
+    public static void applyAccentColor(Activity activity) {
+        if (DynamicColors.isDynamicColorAvailable()) {
+            // use primary color from theme
+            int color = getColorWithoutFallback(activity, "primary-color");
+            if (color == COLOR_TRANSPARENT || color == COLOR_LIGHT_TRANSPARENT || color == COLOR_DARK_TRANSPARENT) {
+                color = COLOR_DEFAULT;
+            }
+
+            DynamicColorsOptions.Builder optionsBuilder = new DynamicColorsOptions.Builder();
+            if (color != COLOR_SYSTEM) {
+                optionsBuilder.setContentBasedSource(color);
+            }
+            DynamicColors.applyToActivityIfAvailable(activity, optionsBuilder.build());
+        }
+
+        // We want to update the accent color for the theme.
+        // Each possible accent color is defined as a custom overlay, we need to find the matching one and apply it
+        Integer overlayAccentResId = OVERLAY_MAP.get(getColorWithoutFallback(activity, "primary-color"));
+        if (overlayAccentResId == null || overlayAccentResId == -1) {
+            overlayAccentResId = OVERLAY_MAP.get(getPrimaryColor(activity));
+        }
+        if (overlayAccentResId != null && overlayAccentResId != -1) {
+            activity.getTheme().applyStyle(overlayAccentResId, true);
+        }
+    }
+
+    public static void updateThemePrimaryColor(Activity activity) {
+        @ColorInt
+        int notificationBarColorOverride = getNotificationBarColor(activity);
+
+        // Circuit breaker, keep default behavior.
+        if (notificationBarColorOverride == COLOR_DEFAULT) {
+            return;
+        }
+
+        Window window = activity.getWindow();
+        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+
+        // Update status bar color
+        window.setStatusBarColor(notificationBarColorOverride);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.setNavigationBarContrastEnforced(false);
+        }
+    }
+
+    @ColorInt
+    private static int getNotificationBarColor(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            return COLOR_TRANSPARENT;
+        } else {
+            return getColor(context, "notification-bar-color", R.color.kiss_notification_bar_color);
+        }
+    }
+
+    /**
+     * Get primary color.
+     *
+     * @param context
+     * @return color from preferences
+     */
+    @ColorInt
+    public static int getPrimaryColor(Context context) {
+        if (primaryColor == -1) {
+            // use primary color from theme
+            primaryColor = getThemedColor(context, "primary-color", android.R.attr.colorPrimary);
+            // Transparent and black can't be displayed for text color, replace with light gray.
+            if (primaryColor == COLOR_TRANSPARENT || primaryColor == COLOR_LIGHT_TRANSPARENT || primaryColor == Color.BLACK) {
+                primaryColor = 0xFFBDBDBD;
+            }
+        }
+
+        return primaryColor;
+    }
+
+    /**
+     * Get black or white, whichever is more readable on the toolbar.
+     * The toolbar background is the primary color, drawn over the window background (primary color can be transparent).
+     *
+     * @param context themed context
+     * @return color to use for toolbar title and icons
+     */
+    @ColorInt
+    public static int getTextColorOnPrimary(@NonNull Context context) {
+        try (TypedArray array = context.obtainStyledAttributes(new int[]{androidx.appcompat.R.attr.colorPrimary, android.R.attr.windowBackground})) {
+            int background = ColorUtils.compositeColors(array.getColor(0, COLOR_DEFAULT), array.getColor(1, Color.WHITE));
+            if (ColorUtils.calculateContrast(Color.BLACK, background) >= ColorUtils.calculateContrast(Color.WHITE, background)) {
+                return Color.BLACK;
+            }
+            return Color.WHITE;
+        }
+    }
+
+    /**
+     * Get color for notification dots.
+     *
+     * @param context
+     * @return color from preferences
+     */
+    @ColorInt
+    public static int getNotificationDotColor(Context context, boolean isFavorite) {
+        if (isFavorite && !PreferenceManager.getDefaultSharedPreferences(context).getBoolean("enable-favorites-bar", true)) {
+            return Color.WHITE;
+        }
+        return getThemedColor(context, "primary-color", R.attr.kiss_notification_dot_color);
+    }
+
+    /**
+     * Get color from preferences.
+     *
+     * @param context
+     * @param preferenceKey
+     * @return color from preferences, use color given by {@code getColor} when saved value is {@link UIColors#COLOR_SYSTEM}
+     */
+    @ColorInt
+    private static int getColor(@NonNull Context context, @NonNull String preferenceKey, @ColorRes int systemColorId) {
+        int color = getColorWithoutFallback(context, preferenceKey);
+        if (color == COLOR_SYSTEM) {
+            color = ContextCompat.getColor(context, systemColorId);
+        }
+        return color;
+    }
+
+    /**
+     * Get color from preferences.
+     *
+     * @param context
+     * @param preferenceKey
+     * @return color from preferences, use color from theme given by {@code colorAttribute} when saved value is {@link UIColors#COLOR_SYSTEM}
+     */
+    @ColorInt
+    private static int getThemedColor(@NonNull Context context, @NonNull String preferenceKey, @AttrRes int colorAttribute) {
+        int color = getColorWithoutFallback(context, preferenceKey);
+        if (color == COLOR_SYSTEM) {
+            try (TypedArray array = context.obtainStyledAttributes(new int[]{colorAttribute})) {
+                color = array.getColor(0, COLOR_DEFAULT);
+            }
+        }
+        return color;
+    }
+
+    @ColorInt
+    private static int getColorWithoutFallback(Context context, String preferenceKey) {
+        String colorStr = PreferenceManager.getDefaultSharedPreferences(context).getString(preferenceKey, COLOR_DEFAULT_STR);
+        return Color.parseColor(colorStr);
+    }
+
+    public static void clearColorCache() {
+        primaryColor = -1;
+    }
+
+    public static int[] getColorList() {
+        return COLOR_LIST;
+    }
+
+    /**
+     * @param context
+     * @return icon colors from system
+     */
+    @ColorInt
+    public static int[] getIconColors(Context context) {
+        int[] colors = new int[2];
+        try (TypedArray array = context.obtainStyledAttributes(new int[]{R.attr.kiss_icon_background, R.attr.kiss_icon_foreground})) {
+            colors[0] = array.getColor(0, Color.WHITE); // background
+            colors[1] = array.getColor(1, getPrimaryColor(context)); // foreground
+        }
+        return colors;
+    }
+
+    /**
+     * @param color, color to transform
+     * @return color transformed to string
+     */
+    public static String colorToString(@ColorInt int color) {
+        return String.format("#%08X", color);
+    }
+
+    /**
+     * @param context
+     * @return result color from theme
+     */
+    @ColorInt
+    public static int getResultColor(Context context) {
+        @StyleableRes int[] attrs = new int[]{R.attr.resultColor};
+        try (TypedArray ta = context.obtainStyledAttributes(attrs)) {
+            return ta.getColor(0, Color.WHITE);
+        }
+    }
+
+}

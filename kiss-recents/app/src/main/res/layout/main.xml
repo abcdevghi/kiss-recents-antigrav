@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <FrameLayout
+        android:id="@+id/resultLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@+id/searchEditLayout"
+        android:layout_alignParentStart="true"
+        android:layout_marginStart="@dimen/list_margin_horizontal"
+        android:layout_marginLeft="@dimen/list_margin_horizontal"
+        android:layout_marginEnd="@dimen/list_margin_horizontal"
+        android:layout_marginRight="@dimen/list_margin_horizontal"
+        android:layout_marginBottom="10dp"
+        android:background="?attr/listBackgroundColor"
+        android:elevation="2dp"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <fr.neamar.kiss.ui.AnimatedListView
+            android:id="@android:id/list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="top|center_horizontal"
+            android:cacheColorHint="@android:color/transparent"
+            android:divider="?attr/dividerDrawable"
+            android:dividerHeight="1dp"
+            android:stackFromBottom="true"
+            android:transcriptMode="alwaysScroll"
+            tools:listitem="@layout/item_app" />
+
+    </FrameLayout>
+
+    <RelativeLayout
+        android:id="@id/searchEditLayout"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/bar_height"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginStart="10dp"
+        android:layout_marginLeft="10dp"
+        android:layout_marginEnd="10dp"
+        android:layout_marginRight="10dp"
+        android:layout_marginBottom="10dp"
+        android:background="?attr/searchBackgroundColor"
+        android:clipToPadding="false"
+        android:elevation="2dp">
+
+        <FrameLayout
+            android:id="@+id/leftHandSideButtonsWrapper"
+            android:layout_width="@dimen/launcher_button_width"
+            android:layout_height="match_parent"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true">
+
+            <ImageView
+                android:id="@+id/launcherButton"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="?attr/appSelectableItemBackground"
+                android:contentDescription="@string/main_kiss"
+                android:focusable="true"
+                android:paddingStart="@dimen/launcher_button_padding"
+                android:paddingLeft="@dimen/launcher_button_padding"
+                android:paddingEnd="@dimen/launcher_button_padding"
+                android:paddingRight="@dimen/launcher_button_padding"
+                android:src="@drawable/ic_launcher_white"
+                app:tint="?attr/colorPrimary" />
+
+            <ProgressBar
+                android:id="@+id/loaderBar"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:indeterminate="true"
+                android:paddingStart="@dimen/launcher_button_padding"
+                android:paddingLeft="@dimen/launcher_button_padding"
+                android:paddingEnd="@dimen/launcher_button_padding"
+                android:paddingRight="@dimen/launcher_button_padding"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+        <!-- Tapping the bar sends the user Home -->
+        <TextView
+            android:id="@+id/homeBar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_centerVertical="true"
+            android:layout_toStartOf="@+id/rightHandSideButtonsWrapper"
+            android:layout_toEndOf="@id/leftHandSideButtonsWrapper"
+            android:background="@android:color/transparent"
+            android:clickable="true"
+            android:contentDescription="@string/main_home"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:textColor="?attr/searchColor"
+            android:textSize="16sp" />
+
+        <FrameLayout
+            android:id="@id/rightHandSideButtonsWrapper"
+            android:layout_width="@dimen/launcher_button_width"
+            android:layout_height="match_parent"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true">
+
+            <ImageView
+                android:id="@+id/clearButton"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="?attr/appSelectableItemBackground"
+                android:contentDescription="@string/main_clear"
+                android:focusable="true"
+                android:paddingStart="@dimen/launcher_button_padding"
+                android:paddingLeft="@dimen/launcher_button_padding"
+                android:paddingEnd="@dimen/launcher_button_padding"
+                android:paddingRight="@dimen/launcher_button_padding"
+                android:src="@drawable/ic_close"
+                app:tint="?attr/searchColor" />
+        </FrameLayout>
+
+    </RelativeLayout>
+
+    <TextView
+        android:id="@android:id/empty"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/searchEditLayout"
+        android:gravity="center"
+        android:text="@string/recents_empty"
+        android:textColor="?attr/searchColor"
+        android:textSize="16sp"
+        android:visibility="visible"
+        tools:visibility="gone" />
+
+</RelativeLayout>

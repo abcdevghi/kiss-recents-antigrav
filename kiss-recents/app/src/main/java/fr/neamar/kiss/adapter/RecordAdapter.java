@@ -1,0 +1,240 @@
+package fr.neamar.kiss.adapter;
+
+import android.content.Context;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.SectionIndexer;
+
+import androidx.annotation.NonNull;
+import androidx.fragment.app.DialogFragment;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import fr.neamar.kiss.normalizer.StringNormalizer;
+import fr.neamar.kiss.pojo.Pojo;
+import fr.neamar.kiss.result.Result;
+import fr.neamar.kiss.searcher.QueryInterface;
+import fr.neamar.kiss.ui.ListPopup;
+import fr.neamar.kiss.utils.Log;
+import fr.neamar.kiss.utils.fuzzy.FuzzyScore;
+
+public class RecordAdapter extends BaseAdapter implements SectionIndexer {
+    private final QueryInterface parent;
+    private FuzzyScore fuzzyScore;
+
+    /**
+     * Array list containing all the results currently displayed
+     */
+    private final List<Result<?>> results;
+
+    // Mapping from letter to a position (only used for fast scroll, when viewing app list)
+    private final HashMap<String, Integer> alphaIndexer = new HashMap<>();
+    // List of available sections (only used for fast scroll)
+    private String[] sections = new String[0];
+    private static final String TAG = RecordAdapter.class.getSimpleName();
+
+    public RecordAdapter(QueryInterface parent, List<Result<?>> results) {
+        this.parent = parent;
+        this.results = results;
+        this.fuzzyScore = null;
+    }
+
+    @Override
+    public int getViewTypeCount() {
+        return 7;
+    }
+
+    @Override
+    public int getItemViewType(int position) {
+        return Result.getItemViewType(getItem(position));
+    }
+
+    @Override
+    public boolean hasStableIds() {
+        return true;
+    }
+
+    @Override
+    public int getCount() {
+        return results.size();
+    }
+
+    @Override
+    public Result<?> getItem(int position) {
+        return results.get(position);
+    }
+
+    @Override
+    public long getItemId(int position) {
+        // In some situation, Android tries to display an item that does not exist (e.g. item 24 in a list containing 22 items)
+        // See https://github.com/Neamar/KISS/issues/890
+        return position < results.size() ? getItem(position).getUniqueId() : -1;
+    }
+
+    @Override
+    @NonNull
+    public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+        return getItem(position).display(parent.getContext(), convertView, parent, fuzzyScore);
+    }
+
+    public void onLongClick(final int pos, View v) {
+        ListPopup menu = getItem(pos).getPopupMenu(v.getContext(), this, v);
+
+        // check if menu contains elements and if yes show it
+        if (menu.getAdapter().getCount() > 0) {
+            parent.registerPopup(menu);
+            menu.show(v);
+        }
+    }
+
+    public void onClick(final int position, View v) {
+        try {
+            final Result<?> result = getItem(position);
+            result.launch(v.getContext(), v, parent);
+        } catch (IndexOutOfBoundsException e) {
+            Log.w(TAG, "Unable to click", e);
+        }
+    }
+
+    public void removeResult(Result<?> result) {
+        parent.beforeListChange();
+        results.remove(result);
+        notifyDataSetChanged();
+        // Do not reset scroll, we want the remaining items to still be in view
+        parent.temporarilyDisableTranscriptMode();
+        parent.afterListChange();
+    }
+
+    /**
+     * Remove several results with a single update of the list.
+     */
+    public void removeResults(java.util.Collection<? extends Result<?>> toRemove) {
+        parent.beforeListChange();
+        results.removeAll(toRemove);
+        notifyDataSetChanged();
+        // Do not reset scroll, we want the remaining items to still be in view
+        parent.temporarilyDisableTranscriptMode();
+        parent.afterListChange();
+    }
+
+    public void updateWithPojos(@NonNull Context context, @NonNull List<Pojo> pojos, boolean isRefresh, String query) {
+        Map<Pojo, Result<?>> existingResults = this.results.stream()
+                .collect(Collectors.toMap(Result::getPojo, Function.identity(), (a, b) -> a));
+        List<Result<?>> updatedResults = pojos.stream()
+                .filter(Objects::nonNull)
+                .map(pojo -> existingResults.getOrDefault(pojo, Result.fromPojo(parent, pojo)))
+                .collect(Collectors.toList());
+
+        updateResults(context, updatedResults, isRefresh, query);
+    }
+
+    public void updateResults(@NonNull Context context, List<Result<?>> updatedResults, boolean isRefresh, String query) {
+        parent.beforeListChange();
+
+        this.results.clear();
+        this.results.addAll(updatedResults);
+        if (query == null || query.isEmpty()) {
+            fuzzyScore = null;
+        } else {
+            StringNormalizer.Result queryNormalized = StringNormalizer.normalizeWithResult(query, false);
+            fuzzyScore = new FuzzyScore(queryNormalized.codePoints, true);
+        }
+        notifyDataSetChanged();
+
+        if (isRefresh) {
+            // We're refreshing an existing dataset, do not reset scroll!
+            parent.temporarilyDisableTranscriptMode();
+        }
+
+        parent.afterListChange();
+    }
+
+    /**
+     * Force set transcript mode on the list.
+     * Prefer to use `parent.temporarilyDisableTranscriptMode();`
+     */
+    public void updateTranscriptMode(int transcriptMode) {
+        parent.updateTranscriptMode(transcriptMode);
+    }
+
+
+    public void clear() {
+        parent.beforeListChange();
+        this.results.clear();
+        notifyDataSetChanged();
+        parent.afterListChange();
+    }
+
+    /**
+     * When using fast scroll, generate a mapping to know where a given letter starts in the list
+     * (can only be used with a sorted result set!)
+     */
+    public void buildSections() {
+        alphaIndexer.clear();
+        int size = results.size();
+
+        // Generate the mapping letter => number
+        for (int i = 0; i < size; i++) {
+            String s = getItem(i).getSection();
+
+            // Put the first one
+            if (!alphaIndexer.containsKey(s)) {
+                alphaIndexer.put(s, i);
+            }
+        }
+
+        // Generate section list
+        List<Map.Entry<String, Integer>> entries = new ArrayList<>(alphaIndexer.entrySet());
+        Collections.sort(entries, Map.Entry.comparingByValue());
+        sections = new String[entries.size()];
+        for (int i = 0; i < entries.size(); i++) {
+            sections[i] = entries.get(i).getKey();
+        }
+    }
+
+    @Override
+    public Object[] getSections() {
+        return sections;
+    }
+
+    @Override
+    public int getPositionForSection(int sectionIndex) {
+        if (sections.length == 0) {
+            return 0;
+        }
+
+        // In some rare situations, the system will ask for a section
+        // that does not exist anymore.
+        // It's likely there is a threading issue in our code somewhere,
+        // But I was unable to find where, so the following line is a quick and dirty fix.
+        sectionIndex = Math.max(0, Math.min(sections.length - 1, sectionIndex));
+        return alphaIndexer.getOrDefault(sections[sectionIndex], 0);
+    }
+
+    @Override
+    public int getSectionForPosition(int position) {
+        for (int i = 0; i < sections.length; i++) {
+            if (alphaIndexer.get(sections[i]) > position) {
+                return i - 1;
+            }
+        }
+
+        // If apps starting with the letter "A" cover more than a full screen,
+        // we will never get > position
+        // so we just return the before-last section
+        // See #1005
+        return Math.max(sections.length - 2, 0);
+    }
+
+    public void showDialog(DialogFragment dialog) {
+        parent.showDialog(dialog);
+    }
+}

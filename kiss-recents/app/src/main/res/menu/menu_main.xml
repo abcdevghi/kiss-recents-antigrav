@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/preferences"
+        android:icon="@drawable/ic_launcher_white"
+        android:title="@string/activity_setting"
+        app:iconTint="?attr/colorPrimary"
+        app:showAsAction="ifRoom|withText" />
+    <item
+        android:id="@+id/wallpaper"
+        android:title="@string/menu_wallpaper"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/add_widget"
+        android:title="@string/menu_widget_add"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/settings"
+        android:title="@string/menu_settings"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/private_space"
+        android:title="@string/menu_private_space"
+        app:showAsAction="never" />
+</menu>
