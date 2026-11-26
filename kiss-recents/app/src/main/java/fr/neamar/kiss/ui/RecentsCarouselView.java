@@ -210,8 +210,13 @@ public class RecentsCarouselView extends FrameLayout {
                 layoutCarousel();
                 postOnAnimation(this);
             } else {
+                int targetIdx = flingTargetVisualIdx;
                 flingTargetVisualIdx = -1;
-                snapScrollToNearest(true);
+                if (targetIdx >= 0) {
+                    snapScrollTo(targetIdx, true, true);
+                } else {
+                    snapScrollToNearest(true);
+                }
                 releaseScrollSway();
             }
         }
@@ -763,9 +768,20 @@ public class RecentsCarouselView extends FrameLayout {
                 if (targetIdx == currentIdx) {
                     targetIdx = (int) clamp(currentIdx + (vy < 0f ? 1f : -1f), 0f, maxIdx);
                 }
-                flingTargetVisualIdx = targetIdx;
-                scrollScroller.setFinalY(targetIdx * 1000);
-                postOnAnimation(flingTick);
+                if (Math.abs(targetIdx - scrollItemPos) <= 1.15f) {
+                    scrollScroller.abortAnimation();
+                    flingTargetVisualIdx = -1;
+                    snapScrollTo(targetIdx, true, true);
+                    releaseScrollSway();
+                } else {
+                    int boundY = targetIdx * 1000;
+                    int minBound = Math.min(startMilli, boundY);
+                    int maxBound = Math.max(startMilli, boundY);
+                    scrollScroller.abortAnimation();
+                    scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, minBound, maxBound, 0, 0);
+                    flingTargetVisualIdx = targetIdx;
+                    postOnAnimation(flingTick);
+                }
             } else {
                 snapScrollToNearest(true);
                 releaseScrollSway();
