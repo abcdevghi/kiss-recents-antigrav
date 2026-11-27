@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteDatabase;
 import fr.neamar.kiss.db.DBHelper;
 import fr.neamar.kiss.utils.IconPackCache;
 import fr.neamar.kiss.utils.TaskSnapshotCache;
+import fr.neamar.kiss.utils.WallpaperBlurCache;
 
 public class KissApplication extends Application {
 
@@ -95,6 +96,7 @@ public class KissApplication extends Application {
             mIconPackCache.clearCache(this);
             mimeTypeCache.clearCache();
             TaskSnapshotCache.clear();
+            WallpaperBlurCache.clear();
         }
     }
 

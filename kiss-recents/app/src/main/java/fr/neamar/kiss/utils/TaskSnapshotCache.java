@@ -10,7 +10,7 @@ import androidx.annotation.Nullable;
  */
 public final class TaskSnapshotCache {
 
-    private static final int MAX_CACHE_BYTES = 10 * 1024 * 1024;
+    private static final int MAX_CACHE_BYTES = 24 * 1024 * 1024;
 
     private static final LruCache<Integer, Bitmap> CACHE = new LruCache<Integer, Bitmap>(MAX_CACHE_BYTES) {
         @Override

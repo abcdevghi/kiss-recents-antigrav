@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.DataSetObserver;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
@@ -36,6 +37,7 @@ import fr.neamar.kiss.utils.Log;
 import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.SystemBars;
 import fr.neamar.kiss.utils.Utilities;
+import fr.neamar.kiss.utils.WallpaperBlurCache;
 
 /**
  * The only screen: a list of recently used apps, a bar that sends the user Home when tapped,
@@ -72,6 +74,10 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private ListPopup mPopup;
     private String appearanceSignature;
     private boolean started;
+    private boolean lastWallpaperEnabled;
+    private boolean lastDimOverlay;
+    private boolean lastBlurEnabled;
+    private boolean lastNativeBlur;
     private long lastRecentsPress;
     private long sessionStartUptimeMs;
     @Nullable
@@ -97,7 +103,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             return;
         }
 
-        Appearance.applyWindowWallpaper(this, prefs);
+        disableActivityTransition();
         UIColors.updateThemePrimaryColor(this);
 
         KissApplication.getApplication(this).getDataHandler().setMainActivity(this);
@@ -108,11 +114,10 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
         boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
         rootLayout = findViewById(R.id.mainRoot);
-        rootLayout.setClearTransparentViewport(wallpaperEnabled);
-        rootLayout.setDarkWallpaperOverlay(prefs.getBoolean("wallpaper-dim-overlay", true));
         listContainer = findViewById(R.id.resultLayout);
         carousel = findViewById(R.id.recentsCarousel);
         carousel.setTransparentViewport(wallpaperEnabled);
+        syncWallpaperEffects(true);
         Appearance.applyRoundedCorners(prefs, findViewById(R.id.searchEditLayout), listContainer);
         emptyListView = findViewById(android.R.id.empty);
         launcherButton = findViewById(R.id.launcherButton);
@@ -219,10 +224,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
 
         dismissPopup();
-        Appearance.applyWindowWallpaper(this, prefs);
-        if (rootLayout != null) {
-            rootLayout.setDarkWallpaperOverlay(prefs.getBoolean("wallpaper-dim-overlay", true));
-        }
+        syncWallpaperEffects(false);
         carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
 
         if (KissApplication.getApplication(this).getDataHandler().isAllProvidersLoaded()) {
@@ -256,6 +258,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        disableActivityTransition();
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
         handleRecentsPress(intent, false);
@@ -372,6 +375,63 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         home.addCategory(Intent.CATEGORY_HOME);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(home);
+        disableActivityTransition();
+    }
+
+    private void syncWallpaperEffects(boolean forceApplyWindow) {
+        boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
+        boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
+        boolean blurEnabled = Appearance.isBlurEnabled(prefs);
+        boolean nativeBlur = blurEnabled && Appearance.isCrossWindowBlurSupported(this);
+
+        if (forceApplyWindow
+                || wallpaperEnabled != lastWallpaperEnabled
+                || dimOverlay != lastDimOverlay
+                || blurEnabled != lastBlurEnabled
+                || nativeBlur != lastNativeBlur) {
+            lastWallpaperEnabled = wallpaperEnabled;
+            lastDimOverlay = dimOverlay;
+            lastBlurEnabled = blurEnabled;
+            lastNativeBlur = nativeBlur;
+            Appearance.applyWindowWallpaper(this, prefs);
+        }
+
+        if (rootLayout != null) {
+            rootLayout.setClearTransparentViewport(wallpaperEnabled);
+            rootLayout.setDarkWallpaperOverlay(dimOverlay);
+            rootLayout.setWallpaperBlurEnabled(wallpaperEnabled && blurEnabled, nativeBlur);
+        }
+        if (carousel != null) {
+            carousel.setTransparentViewport(wallpaperEnabled);
+        }
+
+        if (wallpaperEnabled && blurEnabled && !nativeBlur) {
+            WallpaperBlurCache.requestAsyncIfNeeded(this, () -> runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (rootLayout != null) {
+                    rootLayout.invalidate();
+                }
+                if (getWindow() != null) {
+                    getWindow().getDecorView().invalidate();
+                }
+            }));
+        }
+    }
+
+    private void disableActivityTransition() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0);
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0);
+        } else {
+            overridePendingTransitionCompat();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void overridePendingTransitionCompat() {
+        overridePendingTransition(0, 0);
     }
 
     private boolean isRootActivated() {

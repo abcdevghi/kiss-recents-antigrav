@@ -314,6 +314,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
             HookLog.log("no context to start KISS recents from");
             return false;
         }
+        RecentsBridgeService.setHostContext(starter);
 
         Bundle noAnimOptions = createNoAnimOptions(starter);
         ComponentName target = cachedTargetComponent;

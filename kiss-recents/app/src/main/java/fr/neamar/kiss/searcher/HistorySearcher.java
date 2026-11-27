@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
 import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
@@ -33,7 +34,9 @@ import fr.neamar.kiss.utils.PackageManagerUtils;
 import fr.neamar.kiss.utils.RecentTasks;
 import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.RunningApps;
+import fr.neamar.kiss.utils.TaskSnapshotCache;
 import fr.neamar.kiss.utils.UserHandle;
+import fr.neamar.kiss.utils.Utilities;
 
 /**
  * Builds the list of the main screen. When the Recents Binder bridge or root mode is on: the apps
@@ -177,7 +180,7 @@ public class HistorySearcher extends Searcher {
             RootHandler rootHandler = KissApplication.getApplication(activity).getRootHandler();
             boolean bridgeAvailable = RecentsBridgeClient.isAvailable();
             boolean rootActivated = rootHandler.isRootActivated();
-            if (apps == null || (!bridgeAvailable && !rootActivated)) {
+            if (!bridgeAvailable && !rootActivated) {
                 return result;
             }
 
@@ -187,19 +190,24 @@ public class HistorySearcher extends Searcher {
             }
 
             // Build O(1) lookup by package name and reset previous task/memory figures
-            Map<String, List<AppPojo>> appsByPackage = new HashMap<>(apps.size());
-            for (AppPojo app : apps) {
-                app.rssKb = 0;
-                app.taskId = -1;
-                app.hasTaskIcon = false;
-                if (app.getUserHandle().isCurrentUser()) {
-                    List<AppPojo> list = appsByPackage.get(app.packageName);
-                    if (list == null) {
-                        list = new ArrayList<>(2);
-                        appsByPackage.put(app.packageName, list);
+            Map<String, List<AppPojo>> appsByPackage;
+            if (apps != null) {
+                appsByPackage = new HashMap<>(apps.size());
+                for (AppPojo app : apps) {
+                    app.rssKb = 0;
+                    app.taskId = -1;
+                    app.hasTaskIcon = false;
+                    if (app.getUserHandle().isCurrentUser()) {
+                        List<AppPojo> list = appsByPackage.get(app.packageName);
+                        if (list == null) {
+                            list = new ArrayList<>(2);
+                            appsByPackage.put(app.packageName, list);
+                        }
+                        list.add(app);
                     }
-                    list.add(app);
                 }
+            } else {
+                appsByPackage = Collections.emptyMap();
             }
 
             // This app, and the home screen app, are not worth switching to
@@ -301,6 +309,23 @@ public class HistorySearcher extends Searcher {
 
             lastTasks = Collections.unmodifiableList(new ArrayList<>(result.tasks));
             lastFetchUptimeMs = SystemClock.uptimeMillis();
+
+            if (bridgeAvailable && !result.tasks.isEmpty()) {
+                int prefetchCount = Math.min(2, result.tasks.size());
+                for (int i = 0; i < prefetchCount; i++) {
+                    final int taskId = result.tasks.get(i).taskId;
+                    if (taskId > 0 && TaskSnapshotCache.get(taskId) == null) {
+                        Utilities.getDefaultExecutor().execute(() -> {
+                            if (TaskSnapshotCache.get(taskId) == null) {
+                                Bitmap bmp = RecentsBridgeClient.getTaskSnapshot(taskId);
+                                if (bmp != null) {
+                                    TaskSnapshotCache.put(taskId, bmp);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
             return result;
         }
     }

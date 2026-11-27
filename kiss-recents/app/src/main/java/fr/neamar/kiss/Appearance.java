@@ -8,13 +8,17 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.TypedArray;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.Window;
@@ -25,6 +29,11 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
+
+import java.lang.ref.WeakReference;
+
+import fr.neamar.kiss.utils.DrawableUtils;
+import fr.neamar.kiss.utils.WallpaperBlurCache;
 
 /**
  * Applies the appearance preferences (theme, colors, shapes, sizes). They are imported from KISS,
@@ -106,9 +115,21 @@ public final class Appearance {
         return !"amoled-dark".equals(getTheme(prefs));
     }
 
+    public static boolean isBlurEnabled(SharedPreferences prefs) {
+        return prefs.getBoolean("wallpaper-blur", false);
+    }
+
+    public static boolean isCrossWindowBlurSupported(@NonNull Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return false;
+        }
+        WindowManager wm = context.getSystemService(WindowManager.class);
+        return wm != null && wm.isCrossWindowBlurEnabled();
+    }
+
     /**
-     * Explicitly synchronize wallpaper window flags, pixel format, and window background so
-     * wallpaper-enabled and opaque themes switch cleanly without transparent frame glitches.
+     * Explicitly synchronize wallpaper window flags, blur flags, pixel format, and window background
+     * so wallpaper-enabled and opaque themes switch cleanly without transparent frame glitches.
      */
     public static void applyWindowWallpaper(Activity act, SharedPreferences prefs) {
         Window window = act.getWindow();
@@ -117,12 +138,30 @@ public final class Appearance {
         }
         if (isWallpaperEnabled(prefs)) {
             final boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
+            final boolean blurEnabled = isBlurEnabled(prefs);
+            final boolean nativeBlur = blurEnabled && isCrossWindowBlurSupported(act);
+            final boolean fallbackBlur = blurEnabled && !nativeBlur;
+
             window.setFormat(PixelFormat.TRANSLUCENT);
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
+            applyWindowBlurState(act, window, nativeBlur);
+
+            final WeakReference<Activity> actRef = new WeakReference<>(act);
             window.setBackgroundDrawable(new Drawable() {
+                private final Paint bitmapPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+                private final Rect srcRect = new Rect();
+                private final Rect dstRect = new Rect();
+
                 @Override
                 public void draw(@NonNull Canvas canvas) {
                     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                    Activity host = actRef.get();
+                    if (fallbackBlur && host != null) {
+                        Bitmap blurred = WallpaperBlurCache.get(host);
+                        if (blurred != null && !blurred.isRecycled()) {
+                            drawCenterCrop(canvas, blurred, bitmapPaint, srcRect, dstRect);
+                        }
+                    }
                     if (dimOverlay) {
                         canvas.drawColor(0x4D000000, PorterDuff.Mode.SRC_OVER);
                     }
@@ -142,6 +181,7 @@ public final class Appearance {
                 }
             });
         } else {
+            applyWindowBlurState(act, window, false);
             window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
             window.setFormat(PixelFormat.OPAQUE);
             try (TypedArray ta = act.obtainStyledAttributes(new int[]{android.R.attr.windowBackground})) {
@@ -149,6 +189,53 @@ public final class Appearance {
                 window.setBackgroundDrawable(bg != null ? bg : new ColorDrawable(Color.BLACK));
             }
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void applyWindowBlurState(Activity act, Window window, boolean nativeBlur) {
+        WindowManager.LayoutParams lp = window.getAttributes();
+        if (nativeBlur) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                lp.setBlurBehindRadius(DrawableUtils.dpToPx(act, 26f));
+            }
+            lp.dimAmount = 0f;
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                lp.setBlurBehindRadius(0);
+            }
+        }
+        window.setAttributes(lp);
+    }
+
+    public static void drawCenterCrop(
+            @NonNull Canvas canvas,
+            @NonNull Bitmap bitmap,
+            @NonNull Paint paint,
+            @NonNull Rect srcRect,
+            @NonNull Rect dstRect) {
+        int canvasW = canvas.getWidth();
+        int canvasH = canvas.getHeight();
+        int bmpW = bitmap.getWidth();
+        int bmpH = bitmap.getHeight();
+        if (canvasW <= 0 || canvasH <= 0 || bmpW <= 0 || bmpH <= 0) {
+            return;
+        }
+        float canvasRatio = (float) canvasW / canvasH;
+        float bmpRatio = (float) bmpW / bmpH;
+        if (bmpRatio > canvasRatio) {
+            int cropW = Math.max(1, Math.round(bmpH * canvasRatio));
+            int left = (bmpW - cropW) / 2;
+            srcRect.set(left, 0, left + cropW, bmpH);
+        } else {
+            int cropH = Math.max(1, Math.round(bmpW / canvasRatio));
+            int top = (bmpH - cropH) / 2;
+            srcRect.set(0, top, bmpW, top + cropH);
+        }
+        dstRect.set(0, 0, canvasW, canvasH);
+        canvas.drawBitmap(bitmap, srcRect, dstRect, paint);
     }
 
     /**

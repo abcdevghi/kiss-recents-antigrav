@@ -2,12 +2,17 @@ package fr.neamar.kiss.xposed;
 
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
+import android.app.WallpaperManager;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.ColorSpace;
 import android.graphics.Rect;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.hardware.HardwareBuffer;
 import android.os.Binder;
 import android.os.Build;
@@ -36,17 +41,21 @@ final class RecentsBridgeService extends Binder {
     static final int TX_START_TASK_POPUP = IBinder.FIRST_CALL_TRANSACTION + 4;
     static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
     static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
+    static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
 
     private static final int ACTIVITY_TYPE_STANDARD = 1;
     private static final int WINDOWING_MODE_FREEFORM = 5;
     private static final int WINDOWING_MODE_MULTI_WINDOW = 6;
-    private static final int MAX_ICON_PX = 192;
-    private static final int MAX_SNAPSHOT_PX = 720;
+    private static final int MAX_ICON_PX = 256;
+    private static final int MAX_SNAPSHOT_PX = 1440;
+    private static final int MAX_SNAPSHOT_BINDER_BYTES = 480 * 1024;
+    private static final int MAX_WALLPAPER_PX = 540;
 
     private static final RecentsBridgeService INSTANCE = new RecentsBridgeService();
 
     private static volatile boolean reflectionInitialized = false;
     private static volatile Object splitScreenController;
+    private static volatile Context hostContext;
     private static Object activityTaskManager;
     private static Method getRecentTasksMethod;
     private static Method startActivityFromRecentsMethod;
@@ -77,6 +86,13 @@ final class RecentsBridgeService extends Binder {
     static void setSplitScreenController(Object controller) {
         if (controller != null) {
             splitScreenController = controller;
+        }
+    }
+
+    static void setHostContext(Context context) {
+        if (context != null) {
+            Context app = context.getApplicationContext();
+            hostContext = app != null ? app : context;
         }
     }
 
@@ -147,6 +163,13 @@ final class RecentsBridgeService extends Binder {
                 data.enforceInterface(DESCRIPTOR);
                 int taskId = data.readInt();
                 byte[] jpeg = getTaskSnapshotBytes(taskId);
+                reply.writeNoException();
+                reply.writeByteArray(jpeg);
+                return true;
+            }
+            case TX_GET_WALLPAPER_BITMAP: {
+                data.enforceInterface(DESCRIPTOR);
+                byte[] jpeg = getWallpaperBitmapBytes();
                 reply.writeNoException();
                 reply.writeByteArray(jpeg);
                 return true;
@@ -519,8 +542,12 @@ final class RecentsBridgeService extends Binder {
                         true);
                 outBitmap = scaledBitmap;
             }
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
-            outBitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(64 * 1024);
+            outBitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
+            if (baos.size() > MAX_SNAPSHOT_BINDER_BYTES) {
+                baos.reset();
+                outBitmap.compress(Bitmap.CompressFormat.JPEG, 78, baos);
+            }
             return baos.toByteArray();
         } catch (Throwable t) {
             HookLog.debug("TaskSnapshot decode failed for task " + taskId + ": " + t);
@@ -542,6 +569,84 @@ final class RecentsBridgeService extends Binder {
                 }
             }
         }
+    }
+
+    private static byte[] getWallpaperBitmapBytes() {
+        Context ctx = resolveHostContext();
+        if (ctx == null) {
+            return null;
+        }
+        long token = Binder.clearCallingIdentity();
+        Bitmap rendered = null;
+        Bitmap scaled = null;
+        try {
+            WallpaperManager wm = WallpaperManager.getInstance(ctx);
+            if (wm == null) {
+                return null;
+            }
+            Drawable drawable = wm.getDrawable();
+            if (drawable == null) {
+                return null;
+            }
+            Bitmap outBitmap;
+            if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
+                outBitmap = ((BitmapDrawable) drawable).getBitmap();
+            } else {
+                int dw = drawable.getIntrinsicWidth() > 1 ? drawable.getIntrinsicWidth() : MAX_WALLPAPER_PX;
+                int dh = drawable.getIntrinsicHeight() > 1 ? drawable.getIntrinsicHeight() : MAX_WALLPAPER_PX;
+                float scale = Math.min(1f, (float) MAX_WALLPAPER_PX / Math.max(dw, dh));
+                int tw = Math.max(16, Math.round(dw * scale));
+                int th = Math.max(16, Math.round(dh * scale));
+                rendered = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(rendered);
+                drawable.setBounds(0, 0, tw, th);
+                drawable.draw(canvas);
+                outBitmap = rendered;
+            }
+            int w = outBitmap.getWidth();
+            int h = outBitmap.getHeight();
+            if (w > MAX_WALLPAPER_PX || h > MAX_WALLPAPER_PX) {
+                float scale = Math.min((float) MAX_WALLPAPER_PX / w, (float) MAX_WALLPAPER_PX / h);
+                scaled = Bitmap.createScaledBitmap(
+                        outBitmap,
+                        Math.max(16, Math.round(w * scale)),
+                        Math.max(16, Math.round(h * scale)),
+                        true);
+                outBitmap = scaled;
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
+            outBitmap.compress(Bitmap.CompressFormat.JPEG, 86, baos);
+            return baos.toByteArray();
+        } catch (Throwable t) {
+            HookLog.debug("getWallpaperBitmap failed: " + t);
+            return null;
+        } finally {
+            if (scaled != null && !scaled.isRecycled()) {
+                scaled.recycle();
+            }
+            if (rendered != null && !rendered.isRecycled()) {
+                rendered.recycle();
+            }
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    private static Context resolveHostContext() {
+        Context cached = hostContext;
+        if (cached != null) {
+            return cached;
+        }
+        try {
+            Class<?> atClass = Class.forName("android.app.ActivityThread");
+            Method currentApp = atClass.getMethod("currentApplication");
+            Object app = currentApp.invoke(null);
+            if (app instanceof Context) {
+                hostContext = (Context) app;
+                return hostContext;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static boolean isIncludeableTask(ActivityManager.RecentTaskInfo info) {

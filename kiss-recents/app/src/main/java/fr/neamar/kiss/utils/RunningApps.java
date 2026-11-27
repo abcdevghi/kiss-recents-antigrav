@@ -1,24 +1,32 @@
 package fr.neamar.kiss.utils;
 
+import android.os.SystemClock;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import fr.neamar.kiss.RootHandler;
 
 /**
- * What is running on the device, read in a single root call: the system's recent tasks
- * ({@code dumpsys activity recents}) and every process with its memory use ({@code ps}).
+ * What is running on the device, read from the Recents Binder bridge or root ({@code dumpsys} /
+ * {@code ps}).
  */
 public final class RunningApps {
 
     private static final String SEPARATOR = "@@KISS_PS@@";
+    private static final long MAX_RSS_CACHE_AGE_MS = 4000L;
 
     /** An Android process name looks like a package name, optionally followed by ":service". */
     private static final Pattern PACKAGE_LIKE = Pattern.compile("^[A-Za-z][\\w]*(\\.[\\w]+)+$");
+
+    private static volatile Map<String, Long> cachedRssKbByPackage = Collections.emptyMap();
+    private static volatile long cachedRssUptimeMs = 0L;
+    private static final AtomicBoolean RSS_REFRESH_IN_FLIGHT = new AtomicBoolean(false);
 
     private RunningApps() {
     }
@@ -41,20 +49,49 @@ public final class RunningApps {
 
     /**
      * Fetch recent tasks (via the Xposed Recents Binder bridge when available, falling back to root
-     * {@code dumpsys activity recents}) and process RSS memory when root mode is active.
+     * {@code dumpsys activity recents}) and return immediately with cached process RSS while
+     * refreshing {@code ps} asynchronously when needed.
      */
     public static Snapshot fetch(RootHandler rootHandler) {
         List<RecentTasks.Task> bridgeTasks = RecentsBridgeClient.getRecentTasks(64, 0);
         if (bridgeTasks != null) {
-            Map<String, Long> rssKbByPackage = rootHandler.isRootActivated()
-                    ? parseProcesses(rootHandler.runRootCommand("ps -A -o RSS,NAME"))
-                    : Collections.emptyMap();
+            Map<String, Long> rssKbByPackage;
+            if (rootHandler.isRootActivated()) {
+                rssKbByPackage = cachedRssKbByPackage;
+                refreshRssAsyncIfStale(rootHandler);
+            } else {
+                rssKbByPackage = Collections.emptyMap();
+            }
             return new Snapshot(bridgeTasks, rssKbByPackage);
         }
         if (!rootHandler.isRootActivated()) {
             return new Snapshot(Collections.emptyList(), Collections.emptyMap());
         }
-        return parse(rootHandler.runRootCommand("dumpsys activity recents; echo " + SEPARATOR + "; ps -A -o RSS,NAME"));
+        Snapshot parsed = parse(rootHandler.runRootCommand("dumpsys activity recents; echo " + SEPARATOR + "; ps -A -o RSS,NAME"));
+        if (!parsed.rssKbByPackage.isEmpty()) {
+            cachedRssKbByPackage = parsed.rssKbByPackage;
+            cachedRssUptimeMs = SystemClock.uptimeMillis();
+        }
+        return parsed;
+    }
+
+    private static void refreshRssAsyncIfStale(final RootHandler rootHandler) {
+        long age = SystemClock.uptimeMillis() - cachedRssUptimeMs;
+        if (cachedRssUptimeMs > 0L && age <= MAX_RSS_CACHE_AGE_MS) {
+            return;
+        }
+        if (!RSS_REFRESH_IN_FLIGHT.compareAndSet(false, true)) {
+            return;
+        }
+        Utilities.getDefaultExecutor().execute(() -> {
+            try {
+                Map<String, Long> fresh = parseProcesses(rootHandler.runRootCommand("ps -A -o RSS,NAME"));
+                cachedRssKbByPackage = fresh;
+                cachedRssUptimeMs = SystemClock.uptimeMillis();
+            } finally {
+                RSS_REFRESH_IN_FLIGHT.set(false);
+            }
+        });
     }
 
     public static Snapshot parse(List<String> lines) {

@@ -31,6 +31,7 @@ public final class RecentsBridgeClient {
     private static final int TX_START_TASK_POPUP = IBinder.FIRST_CALL_TRANSACTION + 4;
     private static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
     private static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
+    private static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
 
     private static volatile IBinder bridgeBinder;
 
@@ -285,7 +286,41 @@ public final class RecentsBridgeClient {
             if (jpeg == null || jpeg.length == 0) {
                 return null;
             }
-            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+        } catch (RemoteException e) {
+            bridgeBinder = null;
+            return null;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    @Nullable
+    public static Bitmap getWallpaperBitmap() {
+        IBinder binder = bridgeBinder;
+        if (binder == null) {
+            return null;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            if (!binder.transact(TX_GET_WALLPAPER_BITMAP, data, reply, 0)) {
+                return null;
+            }
+            reply.readException();
+            byte[] jpeg = reply.createByteArray();
+            if (jpeg == null || jpeg.length == 0) {
+                return null;
+            }
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
         } catch (RemoteException e) {
             bridgeBinder = null;
             return null;

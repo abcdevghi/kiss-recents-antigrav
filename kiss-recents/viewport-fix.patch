@@ -1,0 +1,273 @@
+diff --git a/app/src/main/java/fr/neamar/kiss/Appearance.java b/app/src/main/java/fr/neamar/kiss/Appearance.java
+index 30d5def..26c29ff 100644
+--- a/app/src/main/java/fr/neamar/kiss/Appearance.java
++++ b/app/src/main/java/fr/neamar/kiss/Appearance.java
+@@ -7,9 +7,22 @@ import static androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES;
+ import android.app.Activity;
+ import android.content.Context;
+ import android.content.SharedPreferences;
++import android.content.res.TypedArray;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.ColorFilter;
++import android.graphics.PixelFormat;
++import android.graphics.PorterDuff;
++import android.graphics.drawable.ColorDrawable;
++import android.graphics.drawable.Drawable;
++import android.util.TypedValue;
+ import android.view.View;
++import android.view.Window;
++import android.view.WindowManager;
+ 
++import androidx.annotation.AttrRes;
+ import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
+ import androidx.appcompat.app.AppCompatDelegate;
+ import androidx.preference.PreferenceManager;
+ 
+@@ -82,6 +95,58 @@ public final class Appearance {
+         }
+     }
+ 
++    public static boolean isWallpaperEnabled(SharedPreferences prefs) {
++        String wallpaperStyle = prefs.getString("theme-wallpaper", "default");
++        if ("enabled".equals(wallpaperStyle)) {
++            return true;
++        }
++        if ("disabled".equals(wallpaperStyle) || "disabled-light".equals(wallpaperStyle)) {
++            return false;
++        }
++        return !"amoled-dark".equals(getTheme(prefs));
++    }
++
++    /**
++     * Explicitly synchronize wallpaper window flags, pixel format, and window background so
++     * wallpaper-enabled and opaque themes switch cleanly without transparent frame glitches.
++     */
++    public static void applyWindowWallpaper(Activity act, SharedPreferences prefs) {
++        Window window = act.getWindow();
++        if (window == null) {
++            return;
++        }
++        if (isWallpaperEnabled(prefs)) {
++            window.setFormat(PixelFormat.TRANSLUCENT);
++            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
++            window.setBackgroundDrawable(new Drawable() {
++                @Override
++                public void draw(@NonNull Canvas canvas) {
++                    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
++                }
++
++                @Override
++                public void setAlpha(int alpha) {
++                }
++
++                @Override
++                public void setColorFilter(@Nullable ColorFilter colorFilter) {
++                }
++
++                @Override
++                public int getOpacity() {
++                    return PixelFormat.TRANSLUCENT;
++                }
++            });
++        } else {
++            window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
++            window.setFormat(PixelFormat.OPAQUE);
++            try (TypedArray ta = act.obtainStyledAttributes(new int[]{android.R.attr.windowBackground})) {
++                Drawable bg = ta.getDrawable(0);
++                window.setBackgroundDrawable(bg != null ? bg : new ColorDrawable(Color.BLACK));
++            }
++        }
++    }
++
+     /**
+      * Must be called before setContentView().
+      */
+@@ -117,15 +182,33 @@ public final class Appearance {
+     }
+ 
+     /**
+-     * Rounded bars and list, as in KISS.
++     * Rounded bars and list, as in KISS, without casting shadow artifacts on transparent containers.
+      */
+     public static void applyRoundedCorners(SharedPreferences prefs, View searchBar, View resultLayout) {
++        Context context = searchBar.getContext();
++        float opaqueElevation = TypedValue.applyDimension(
++                TypedValue.COMPLEX_UNIT_DIP, 2f, context.getResources().getDisplayMetrics());
++
++        int searchBgColor = resolveAttrColor(context, R.attr.searchBackgroundColor, Color.WHITE);
++        int listBgColor = resolveAttrColor(context, R.attr.listBackgroundColor, Color.WHITE);
++
+         if (prefs.getBoolean("pref-rounded-bars", true)) {
+             searchBar.setBackgroundResource(R.drawable.rounded_search_bar);
+         }
+-        if (prefs.getBoolean("pref-rounded-list", false)) {
++        searchBar.setElevation(Color.alpha(searchBgColor) == 255 ? opaqueElevation : 0f);
++
++        if (prefs.getBoolean("pref-rounded-list", false) && Color.alpha(listBgColor) > 0) {
+             resultLayout.setBackgroundResource(R.drawable.rounded_result_layout);
+             resultLayout.setClipToOutline(true);
++        } else {
++            resultLayout.setClipToOutline(false);
++        }
++        resultLayout.setElevation(Color.alpha(listBgColor) == 255 ? opaqueElevation : 0f);
++    }
++
++    private static int resolveAttrColor(Context context, @AttrRes int attr, int fallback) {
++        try (TypedArray ta = context.obtainStyledAttributes(new int[]{attr})) {
++            return ta.getColor(0, fallback);
+         }
+     }
+ 
+diff --git a/app/src/main/java/fr/neamar/kiss/MainActivity.java b/app/src/main/java/fr/neamar/kiss/MainActivity.java
+index a6867c2..a72a342 100644
+--- a/app/src/main/java/fr/neamar/kiss/MainActivity.java
++++ b/app/src/main/java/fr/neamar/kiss/MainActivity.java
+@@ -31,6 +31,7 @@ import fr.neamar.kiss.searcher.SearchHandler;
+ import fr.neamar.kiss.ui.AnimatedListView;
+ import fr.neamar.kiss.ui.ListPopup;
+ import fr.neamar.kiss.ui.SwipeToDismiss;
++import fr.neamar.kiss.ui.WallpaperClearLayout;
+ import fr.neamar.kiss.utils.Log;
+ import fr.neamar.kiss.utils.SystemBars;
+ 
+@@ -55,6 +56,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
+     public SharedPreferences prefs;
+     public AnimatedListView list;
+ 
++    private WallpaperClearLayout rootLayout;
+     private View listContainer;
+     private View emptyListView;
+     private View launcherButton;
+@@ -82,6 +84,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
+         Appearance.applyTheme(this, prefs);
+         appearanceSignature = Appearance.signature(prefs);
+         UIColors.clearColorCache();
++        Appearance.applyWindowWallpaper(this, prefs);
+         UIColors.updateThemePrimaryColor(this);
+ 
+         KissApplication.getApplication(this).getDataHandler().setMainActivity(this);
+@@ -89,6 +92,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
+         setContentView(R.layout.main);
+         SystemBars.applyInsets(getWindow().getDecorView(), getWindow().getDecorView());
+ 
++        boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
++        rootLayout = findViewById(R.id.mainRoot);
++        if (rootLayout != null) {
++            rootLayout.setClearTransparentViewport(wallpaperEnabled);
++        }
++
+         list = findViewById(android.R.id.list);
+         listContainer = (View) list.getParent();
+         Appearance.applyRoundedCorners(prefs, findViewById(R.id.searchEditLayout), listContainer);
+@@ -138,6 +147,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
+                 boolean empty = adapter.isEmpty();
+                 listContainer.setVisibility(empty ? View.GONE : View.VISIBLE);
+                 emptyListView.setVisibility(empty ? View.VISIBLE : View.GONE);
++                if (rootLayout != null) {
++                    rootLayout.invalidate();
++                }
+             }
+         });
+ 
+@@ -166,6 +178,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
+         }
+ 
+         dismissPopup();
++        Appearance.applyWindowWallpaper(this, prefs);
+ 
+         if (KissApplication.getApplication(this).getDataHandler().isAllProvidersLoaded()) {
+             displayLoader(false);
+diff --git a/app/src/main/java/fr/neamar/kiss/ui/WallpaperClearLayout.java b/app/src/main/java/fr/neamar/kiss/ui/WallpaperClearLayout.java
+new file mode 100644
+index 0000000..4ea99fb
+--- /dev/null
++++ b/app/src/main/java/fr/neamar/kiss/ui/WallpaperClearLayout.java
+@@ -0,0 +1,48 @@
++package fr.neamar.kiss.ui;
++
++import android.content.Context;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.PorterDuff;
++import android.util.AttributeSet;
++import android.widget.RelativeLayout;
++
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
++
++/**
++ * Root container that explicitly clears the translucent window buffer before drawing children when
++ * wallpaper-enabled / transparent themes are active, preventing ghosting and stale shadow trails.
++ */
++public class WallpaperClearLayout extends RelativeLayout {
++
++    private boolean clearTransparentViewport = false;
++
++    public WallpaperClearLayout(@NonNull Context context) {
++        super(context);
++    }
++
++    public WallpaperClearLayout(@NonNull Context context, @Nullable AttributeSet attrs) {
++        super(context, attrs);
++    }
++
++    public WallpaperClearLayout(@NonNull Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
++        super(context, attrs, defStyleAttr);
++    }
++
++    public void setClearTransparentViewport(boolean enabled) {
++        if (clearTransparentViewport != enabled) {
++            clearTransparentViewport = enabled;
++            setWillNotDraw(!enabled);
++            invalidate();
++        }
++    }
++
++    @Override
++    protected void onDraw(@NonNull Canvas canvas) {
++        if (clearTransparentViewport) {
++            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
++        }
++        super.onDraw(canvas);
++    }
++}
+diff --git a/app/src/main/res/layout/main.xml b/app/src/main/res/layout/main.xml
+index 1c92e85..797921b 100644
+--- a/app/src/main/res/layout/main.xml
++++ b/app/src/main/res/layout/main.xml
+@@ -1,7 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
++<fr.neamar.kiss.ui.WallpaperClearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto"
+     xmlns:tools="http://schemas.android.com/tools"
++    android:id="@+id/mainRoot"
+     android:layout_width="match_parent"
+     android:layout_height="match_parent">
+ 
+@@ -17,7 +18,6 @@
+         android:layout_marginRight="@dimen/list_margin_horizontal"
+         android:layout_marginBottom="10dp"
+         android:background="?attr/listBackgroundColor"
+-        android:elevation="2dp"
+         android:visibility="gone"
+         tools:visibility="visible">
+ 
+@@ -47,8 +47,7 @@
+         android:layout_marginRight="10dp"
+         android:layout_marginBottom="10dp"
+         android:background="?attr/searchBackgroundColor"
+-        android:clipToPadding="false"
+-        android:elevation="2dp">
++        android:clipToPadding="false">
+ 
+         <FrameLayout
+             android:id="@+id/leftHandSideButtonsWrapper"
+@@ -136,4 +135,4 @@
+         android:visibility="visible"
+         tools:visibility="gone" />
+ 
+-</RelativeLayout>
++</fr.neamar.kiss.ui.WallpaperClearLayout>

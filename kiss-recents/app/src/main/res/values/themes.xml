@@ -28,6 +28,8 @@
         <item name="android:dialogTheme">@style/AppTheme.Dialog</item>
         <item name="android:windowShowWallpaper">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
         <item name="dividerDrawable">@drawable/list_separator</item>
         <item name="android:textColor">@color/theme_solid_text_color</item>
         <item name="android:textColorPrimary">@color/theme_solid_text_color</item>
@@ -45,6 +47,8 @@
     <style name="AppThemeAmoledDark" parent="AppTheme">
         <item name="android:windowShowWallpaper">false</item>
         <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
         <item name="dividerDrawable">@null</item>
         <item name="searchColor">@android:color/white</item>
         <item name="resultColor">@android:color/white</item>
@@ -55,6 +59,10 @@
     </style>
 
     <style name="AppThemeTransparent" parent="AppTheme">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowContentTransitions">false</item>
         <item name="dividerDrawable">@null</item>
         <item name="colorPrimaryDark">@android:color/transparent</item>
         <item name="textShadowRadius">3</item>
@@ -65,6 +73,8 @@
     </style>
 
     <style name="AppThemeSemiTransparent" parent="AppTheme">
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
         <item name="dividerDrawable">@null</item>
         <item name="textShadowRadius">3</item>
         <item name="resultColor">@color/theme_semi_transparent_result_color</item>

@@ -127,7 +127,7 @@
         android:text="@string/recents_empty"
         android:textColor="?attr/searchColor"
         android:textSize="16sp"
-        android:visibility="visible"
+        android:visibility="gone"
         tools:visibility="gone" />
 
 </fr.neamar.kiss.ui.WallpaperClearLayout>

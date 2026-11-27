@@ -20,4 +20,9 @@
         app:key="wallpaper-dim-overlay"
         app:summary="@string/wallpaper_dim_overlay_summary"
         app:title="@string/wallpaper_dim_overlay_title" />
+    <androidx.preference.SwitchPreferenceCompat
+        app:defaultValue="false"
+        app:key="wallpaper-blur"
+        app:summary="@string/wallpaper_blur_summary"
+        app:title="@string/wallpaper_blur_title" />
 </PreferenceScreen>
