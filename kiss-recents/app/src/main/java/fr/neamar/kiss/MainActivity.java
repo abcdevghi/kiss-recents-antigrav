@@ -2,12 +2,18 @@ package fr.neamar.kiss;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.app.ActivityOptions;
+import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.DataSetObserver;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.view.View;
 import android.widget.ImageView;
@@ -17,6 +23,7 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.DialogFragment;
 import androidx.preference.PreferenceManager;
 
@@ -53,6 +60,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     /** Put by the LSPosed hook on the intent it opens this screen with when the recents button is pressed */
     public static final String EXTRA_RECENTS_PRESSED = "fr.neamar.kiss.RECENTS_PRESSED";
     public static final String EXTRA_HOOK_SOURCE = "fr.neamar.kiss.HOOK_SOURCE";
+    public static final String EXTRA_OPENED_FROM_HOME = "fr.neamar.kiss.OPENED_FROM_HOME";
     /** Minimum gap between two human taps; anything faster is a duplicate hook callback. */
     private static final long DUPLICATE_BOUNCE_WINDOW_MS = 150;
     /** Cross-process duplicate window when SystemUI and One UI Home both report a single physical press. */
@@ -75,6 +83,13 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private ListPopup mPopup;
     private String appearanceSignature;
     private boolean started;
+    private boolean resumed;
+    private boolean stoppedWhileUnlocked;
+    private boolean explicitlyNavigatedAway;
+    private boolean lockedWhileInRecents;
+    private boolean homeSentForCurrentLock;
+    private boolean sessionOpenedFromHome;
+    private boolean userInteractedInRecents;
     private boolean resetCarouselOnNextResume;
     private boolean lastWallpaperEnabled;
     private boolean lastDimOverlay;
@@ -83,8 +98,11 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private boolean lastHasCachedBlur;
     private long lastRecentsPress;
     private long sessionStartUptimeMs;
+    private long lastPausedUptimeMs;
     @Nullable
     private String lastHookSource;
+    @Nullable
+    private BroadcastReceiver screenLockReceiver;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -154,12 +172,14 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
             @Override
             public void onDismissed(List<Result<?>> results) {
+                userInteractedInRecents = true;
                 stopApps(results);
                 adapter.removeResults(results);
             }
 
             @Override
             public void onLaunchSelected(Result<?> result, @Nullable View sourceView) {
+                explicitlyNavigatedAway = true;
                 resetCarouselOnNextResume = true;
                 resetRecentsPressState();
                 result.launch(MainActivity.this, sourceView, MainActivity.this);
@@ -167,7 +187,20 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
             @Override
             public void onKeepAliveToggled() {
+                userInteractedInRecents = true;
                 carousel.refreshAllBoundItems();
+            }
+
+            @Override
+            public void onExternalNavigation() {
+                explicitlyNavigatedAway = true;
+                resetCarouselOnNextResume = true;
+                resetRecentsPressState();
+            }
+
+            @Override
+            public void onUserInteracted() {
+                userInteractedInRecents = true;
             }
         });
         carousel.setAdapter(adapter);
@@ -205,11 +238,18 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         findViewById(R.id.homeBar).setOnClickListener(v -> goHome());
 
         // Left button: settings
-        launcherButton.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        launcherButton.setOnClickListener(v -> {
+            explicitlyNavigatedAway = true;
+            startActivity(new Intent(this, SettingsActivity.class));
+        });
 
         // Right button: clear all recents
-        clearButton.setOnClickListener(v -> clearAllRecents());
+        clearButton.setOnClickListener(v -> {
+            userInteractedInRecents = true;
+            clearAllRecents();
+        });
 
+        registerScreenLockReceiver();
         handleRecentsPress(launchIntent, true);
     }
 
@@ -217,6 +257,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     protected void onStart() {
         super.onStart();
         started = true;
+        stoppedWhileUnlocked = false;
         if (sessionStartUptimeMs == 0L) {
             sessionStartUptimeMs = SystemClock.uptimeMillis();
         }
@@ -225,6 +266,21 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     @Override
     protected void onResume() {
         super.onResume();
+
+        if (lockedWhileInRecents) {
+            lockedWhileInRecents = false;
+            homeSentForCurrentLock = false;
+            goHome();
+            return;
+        }
+
+        resumed = true;
+        explicitlyNavigatedAway = false;
+        stoppedWhileUnlocked = false;
+        lastPausedUptimeMs = 0L;
+        if (rootLayout != null && rootLayout.getVisibility() != View.VISIBLE) {
+            rootLayout.setVisibility(View.VISIBLE);
+        }
 
         if (!Appearance.signature(prefs).equals(appearanceSignature)) {
             // The appearance was imported while this screen was open: rebuild it with the new theme
@@ -253,9 +309,28 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        resumed = false;
+        lastPausedUptimeMs = SystemClock.uptimeMillis();
+        if (!explicitlyNavigatedAway && isDeviceLockedOrScreenOff()) {
+            triggerLockToHome();
+        }
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
         started = false;
+        resumed = false;
+        if (!explicitlyNavigatedAway && !lockedWhileInRecents && isDeviceLockedOrScreenOff()) {
+            triggerLockToHome();
+        } else if (!lockedWhileInRecents) {
+            stoppedWhileUnlocked = true;
+        }
+        if (!lockedWhileInRecents && rootLayout != null && rootLayout.getVisibility() != View.VISIBLE) {
+            rootLayout.setVisibility(View.VISIBLE);
+        }
         resetCarouselOnNextResume = true;
         resetRecentsPressState();
         if (carousel != null) {
@@ -276,6 +351,13 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        lockedWhileInRecents = false;
+        homeSentForCurrentLock = false;
+        explicitlyNavigatedAway = false;
+        stoppedWhileUnlocked = false;
+        if (rootLayout != null && rootLayout.getVisibility() != View.VISIBLE) {
+            rootLayout.setVisibility(View.VISIBLE);
+        }
         disableActivityTransition();
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
@@ -287,12 +369,14 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         lastRecentsPress = 0L;
         lastHookSource = null;
         sessionStartUptimeMs = 0L;
+        sessionOpenedFromHome = false;
+        userInteractedInRecents = false;
     }
 
     /**
-     * Single tap opens KISS Recents; a second intentional tap within {@link #DOUBLE_PRESS_WINDOW_MS}
-     * while Recents is open jumps to the previous app. Filters out duplicate callbacks fired for
-     * one physical press across SystemUI and One UI Home.
+     * Single tap opens KISS Recents; a clean quick second tap while Recents is open jumps to the
+     * previous app (or the current/last app when opened from Home, or after scrolling/interacting).
+     * Filters out duplicate callbacks fired for one physical press across SystemUI and One UI Home.
      */
     private void handleRecentsPress(@Nullable Intent intent, boolean created) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_RECENTS_PRESSED, false)) {
@@ -301,16 +385,19 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         intent.removeExtra(EXTRA_RECENTS_PRESSED);
 
         String hookSource = intent.getStringExtra(EXTRA_HOOK_SOURCE);
+        boolean openedFromHome = intent.getBooleanExtra(EXTRA_OPENED_FROM_HOME, false);
         long now = SystemClock.uptimeMillis();
 
         if (created || !started) {
             sessionStartUptimeMs = now;
             lastRecentsPress = now;
             lastHookSource = hookSource;
+            sessionOpenedFromHome = openedFromHome;
+            userInteractedInRecents = false;
             return;
         }
 
-        long delta = now - lastRecentsPress;
+        long delta = lastRecentsPress > 0L ? (now - lastRecentsPress) : Long.MAX_VALUE;
         if (delta < DUPLICATE_BOUNCE_WINDOW_MS) {
             return;
         }
@@ -320,25 +407,25 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             return;
         }
 
-        boolean doublePress = delta < DOUBLE_PRESS_WINDOW_MS;
+        boolean cleanDoubleTap = lastRecentsPress > 0L
+                && delta < DOUBLE_PRESS_WINDOW_MS
+                && !userInteractedInRecents;
+        boolean targetCurrentApp = sessionOpenedFromHome || !cleanDoubleTap;
         lastRecentsPress = now;
         lastHookSource = hookSource;
-        if (doublePress) {
-            switchToPreviousApp();
-        }
+        switchToTaskAtOffset(targetCurrentApp ? 0 : 1);
     }
 
     /**
-     * Launch the second most recent app: the most recent one is the app that was open when recents was pressed.
-     * With a single open app, that app.
+     * Launch the task at the given index in recents order (0 = current / most recent, 1 = previous).
      */
-    private void switchToPreviousApp() {
+    private void switchToTaskAtOffset(final int desiredIndex) {
         if (!canControlRecents()) {
             return;
         }
         List<AppPojo> cached = HistorySearcher.getRecentCachedTasks(CACHED_TASKS_MAX_AGE_MS, sessionStartUptimeMs);
         if (!cached.isEmpty()) {
-            launchTask(cached.get(Math.min(1, cached.size() - 1)));
+            launchTask(cached.get(Math.min(desiredIndex, cached.size() - 1)));
             return;
         }
         Searcher.SEARCH_THREAD.execute(() -> {
@@ -346,7 +433,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             if (tasks.isEmpty()) {
                 return;
             }
-            final AppPojo target = tasks.get(Math.min(1, tasks.size() - 1));
+            final AppPojo target = tasks.get(Math.min(desiredIndex, tasks.size() - 1));
             runOnUiThread(() -> {
                 if (!isFinishing() && !isDestroyed()) {
                     launchTask(target);
@@ -356,6 +443,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void launchTask(AppPojo target) {
+        explicitlyNavigatedAway = true;
         resetCarouselOnNextResume = true;
         resetRecentsPressState();
         HistorySearcher.clearDismissed(target.packageName);
@@ -367,6 +455,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     @Override
     protected void onDestroy() {
+        unregisterScreenLockReceiver();
         super.onDestroy();
         if (adapter == null) {
             // onCreate() bailed out early, nothing to clean up
@@ -390,13 +479,89 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void goHome() {
+        sendHomeIntent(true);
+    }
+
+    private void sendHomeIntent(boolean markExplicit) {
+        if (markExplicit) {
+            explicitlyNavigatedAway = true;
+        }
         resetCarouselOnNextResume = true;
         resetRecentsPressState();
         Intent home = new Intent(Intent.ACTION_MAIN);
         home.addCategory(Intent.CATEGORY_HOME);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(home);
+        try {
+            Bundle noAnim = ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle();
+            startActivity(home, noAnim);
+        } catch (Throwable ignored) {
+            try {
+                startActivity(home);
+            } catch (Throwable ignored2) {
+            }
+        }
         disableActivityTransition();
+    }
+
+    private boolean isDeviceLockedOrScreenOff() {
+        PowerManager pm = ContextCompat.getSystemService(this, PowerManager.class);
+        if (pm != null && !pm.isInteractive()) {
+            return true;
+        }
+        KeyguardManager km = ContextCompat.getSystemService(this, KeyguardManager.class);
+        return km != null && km.isKeyguardLocked();
+    }
+
+    private void registerScreenLockReceiver() {
+        if (screenLockReceiver != null) {
+            return;
+        }
+        screenLockReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent != null && Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                    onScreenTurnedOff();
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        ContextCompat.registerReceiver(this, screenLockReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
+    }
+
+    private void unregisterScreenLockReceiver() {
+        if (screenLockReceiver != null) {
+            try {
+                unregisterReceiver(screenLockReceiver);
+            } catch (IllegalArgumentException ignored) {
+            }
+            screenLockReceiver = null;
+        }
+    }
+
+    private void onScreenTurnedOff() {
+        if (explicitlyNavigatedAway || stoppedWhileUnlocked) {
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        boolean wasInRecents = resumed
+                || started
+                || (lastPausedUptimeMs > 0L && (now - lastPausedUptimeMs) < 2500L);
+        if (wasInRecents) {
+            triggerLockToHome();
+        }
+    }
+
+    private void triggerLockToHome() {
+        lockedWhileInRecents = true;
+        resetCarouselOnNextResume = true;
+        resetRecentsPressState();
+        if (rootLayout != null) {
+            rootLayout.setVisibility(View.INVISIBLE);
+        }
+        if (!homeSentForCurrentLock) {
+            homeSentForCurrentLock = true;
+            sendHomeIntent(false);
+        }
     }
 
     private void syncWallpaperEffects(boolean forceApplyWindow) {
@@ -496,6 +661,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         if (taskIds.isEmpty() && forceStopPackages.isEmpty()) {
             return;
         }
+        HistorySearcher.invalidateCachedTasks();
         HistorySearcher.markDismissedTasks(taskIds);
         if (!forceStopPackages.isEmpty()) {
             HistorySearcher.markDismissed(forceStopPackages);

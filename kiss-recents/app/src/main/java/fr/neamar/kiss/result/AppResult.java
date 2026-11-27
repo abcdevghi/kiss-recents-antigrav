@@ -463,19 +463,34 @@ public class AppResult extends ResultWithTags<AppPojo> {
     }
 
     @Nullable
-    private Bundle createLaunchAnimationBundle(@Nullable View v) {
-        if (v == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+    private View resolveLaunchAnimTarget(@Nullable View v) {
+        if (v == null) {
             return null;
+        }
+        if (v.findViewById(R.id.banner_snapshot) != null) {
+            return v;
         }
         View potentialIcon = v.findViewById(R.id.item_app_icon);
         if (potentialIcon == null) {
             potentialIcon = v.findViewById(R.id.favorite);
         }
-        if (potentialIcon == null) {
+        return potentialIcon != null ? potentialIcon : v;
+    }
+
+    @Nullable
+    private Bundle createLaunchAnimationBundle(@Nullable View v) {
+        View target = resolveLaunchAnimTarget(v);
+        if (target == null) {
             return null;
         }
-        return ActivityOptions.makeClipRevealAnimation(
-                potentialIcon, 0, 0, potentialIcon.getMeasuredWidth(), potentialIcon.getMeasuredHeight()).toBundle();
+        int rawW = target.getWidth() > 0 ? target.getWidth() : target.getMeasuredWidth();
+        int rawH = target.getHeight() > 0 ? target.getHeight() : target.getMeasuredHeight();
+        if (rawW <= 0 || rawH <= 0) {
+            return null;
+        }
+        int width = Math.max(1, Math.round(rawW * target.getScaleX()));
+        int height = Math.max(1, Math.round(rawH * target.getScaleY()));
+        return ActivityOptions.makeScaleUpAnimation(target, 0, 0, width, height).toBundle();
     }
 
     private static Rect computeDefaultPopupBounds(Context context) {
@@ -568,24 +583,9 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 HistorySearcher.clearDismissedTask(pojo.taskId);
             }
 
-            Rect sourceBounds = null;
-            Bundle opts = null;
-            if (v != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                // We're on a modern Android and can display activity animations
-                // If AppResult, find the icon
-                View potentialIcon = v.findViewById(R.id.item_app_icon);
-                if (potentialIcon == null) {
-                    // If favorite, find the icon
-                    potentialIcon = v.findViewById(R.id.favorite);
-                }
-
-                if (potentialIcon != null) {
-                    sourceBounds = getViewBounds(potentialIcon);
-
-                    // If we got an icon, we create options to get a nice animation
-                    opts = ActivityOptions.makeClipRevealAnimation(potentialIcon, 0, 0, potentialIcon.getMeasuredWidth(), potentialIcon.getMeasuredHeight()).toBundle();
-                }
-            }
+            View animTarget = resolveLaunchAnimTarget(v);
+            Rect sourceBounds = animTarget != null ? getViewBounds(animTarget) : null;
+            Bundle opts = createLaunchAnimationBundle(v);
 
             // 1. Prefer resuming the live task directly by taskId via the Recents Binder bridge.
             // This handles parasitic root apps (e.g. LSPosed) and non-launcher activities natively.

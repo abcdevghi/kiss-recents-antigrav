@@ -93,6 +93,10 @@ public class HistorySearcher extends Searcher {
         }
     }
 
+    public static void invalidateCachedTasks() {
+        lastFetchUptimeMs = 0L;
+    }
+
     public static List<AppPojo> getRecentCachedTasks(long maxAgeMs) {
         return getRecentCachedTasks(maxAgeMs, 0L);
     }

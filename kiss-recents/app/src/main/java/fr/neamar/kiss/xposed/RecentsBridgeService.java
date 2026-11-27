@@ -47,6 +47,8 @@ final class RecentsBridgeService extends Binder {
     static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
 
     private static final int ACTIVITY_TYPE_STANDARD = 1;
+    private static final int ACTIVITY_TYPE_HOME = 2;
+    private static final int ACTIVITY_TYPE_RECENTS = 3;
     private static final int WINDOWING_MODE_FREEFORM = 5;
     private static final int WINDOWING_MODE_MULTI_WINDOW = 6;
     private static final int MAX_ICON_PX = 256;
@@ -61,6 +63,8 @@ final class RecentsBridgeService extends Binder {
     private static volatile Context hostContext;
     private static Object activityTaskManager;
     private static Method getRecentTasksMethod;
+    private static Method getTasksMethod;
+    private static int getTasksArgCount;
     private static Method startActivityFromRecentsMethod;
     private static Method removeTaskMethod;
     private static Method getTaskSnapshotMethod;
@@ -201,6 +205,18 @@ final class RecentsBridgeService extends Binder {
                 if (activityTaskManager != null) {
                     Class<?> iatmClass = activityTaskManager.getClass();
                     getRecentTasksMethod = iatmClass.getMethod("getRecentTasks", int.class, int.class, int.class);
+                    getTasksMethod = findMethod(iatmClass, "getTasks", int.class, boolean.class, boolean.class, int.class);
+                    if (getTasksMethod != null) {
+                        getTasksArgCount = 4;
+                    } else {
+                        getTasksMethod = findMethod(iatmClass, "getTasks", int.class, boolean.class, boolean.class);
+                        if (getTasksMethod != null) {
+                            getTasksArgCount = 3;
+                        } else {
+                            getTasksMethod = findMethod(iatmClass, "getTasks", int.class);
+                            getTasksArgCount = getTasksMethod != null ? 1 : 0;
+                        }
+                    }
                     startActivityFromRecentsMethod = iatmClass.getMethod("startActivityFromRecents", int.class, Bundle.class);
                     removeTaskMethod = iatmClass.getMethod("removeTask", int.class);
                     getTaskSnapshotMethod = findMethod(iatmClass, "getTaskSnapshot", int.class, boolean.class, boolean.class);
@@ -262,6 +278,82 @@ final class RecentsBridgeService extends Binder {
             Binder.restoreCallingIdentity(token);
         }
         return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ActivityManager.RunningTaskInfo> queryRunningTasks(int maxNum) {
+        ensureReflection();
+        if (activityTaskManager == null || getTasksMethod == null) {
+            return null;
+        }
+        long token = Binder.clearCallingIdentity();
+        try {
+            Object list;
+            if (getTasksArgCount == 4) {
+                list = getTasksMethod.invoke(activityTaskManager, maxNum, false, false, 0);
+            } else if (getTasksArgCount == 3) {
+                list = getTasksMethod.invoke(activityTaskManager, maxNum, false, false);
+            } else {
+                list = getTasksMethod.invoke(activityTaskManager, maxNum);
+            }
+            if (list instanceof List<?>) {
+                return (List<ActivityManager.RunningTaskInfo>) list;
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return null;
+    }
+
+    static boolean isHomeOnTop() {
+        List<ActivityManager.RunningTaskInfo> running = queryRunningTasks(4);
+        if (running != null && !running.isEmpty()) {
+            for (ActivityManager.RunningTaskInfo rti : running) {
+                if (rti == null) {
+                    continue;
+                }
+                ComponentName cmp = rti.topActivity != null ? rti.topActivity : rti.baseActivity;
+                if (cmp != null && isKissPackage(cmp.getPackageName())) {
+                    continue;
+                }
+                int activityType = readActivityType(rti);
+                if (activityType == ACTIVITY_TYPE_RECENTS) {
+                    continue;
+                }
+                if (activityType == ACTIVITY_TYPE_HOME
+                        || (rti.baseIntent != null && rti.baseIntent.hasCategory(Intent.CATEGORY_HOME))) {
+                    return true;
+                }
+                return false;
+            }
+        }
+        List<ActivityManager.RecentTaskInfo> recent = queryRecentTasks(5, 0);
+        if (recent != null) {
+            for (ActivityManager.RecentTaskInfo info : recent) {
+                if (info == null) {
+                    continue;
+                }
+                ComponentName cmp = resolveComponent(info);
+                if (cmp != null && isKissPackage(cmp.getPackageName())) {
+                    continue;
+                }
+                int activityType = readActivityType(info);
+                if (activityType == ACTIVITY_TYPE_RECENTS) {
+                    continue;
+                }
+                if (activityType == ACTIVITY_TYPE_HOME
+                        || (info.baseIntent != null && info.baseIntent.hasCategory(Intent.CATEGORY_HOME))) {
+                    return true;
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isKissPackage(String pkg) {
+        return "claude.recents.kiss".equals(pkg) || "claude.recents.kiss.debug".equals(pkg);
     }
 
     private static void handleGetRecentTasks(int maxNum, int userId, Parcel reply) {
@@ -781,7 +873,7 @@ final class RecentsBridgeService extends Binder {
         return info.baseIntent != null ? info.baseIntent.getComponent() : null;
     }
 
-    private static int readActivityType(ActivityManager.RecentTaskInfo info) {
+    private static int readActivityType(Object info) {
         if (configurationField == null || windowConfigurationField == null || getActivityTypeMethod == null) {
             return 0;
         }

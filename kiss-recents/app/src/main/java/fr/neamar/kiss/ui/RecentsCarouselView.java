@@ -66,6 +66,12 @@ public class RecentsCarouselView extends FrameLayout {
         void onLaunchSelected(Result<?> result, @Nullable View sourceView);
 
         void onKeepAliveToggled();
+
+        default void onExternalNavigation() {
+        }
+
+        default void onUserInteracted() {
+        }
     }
 
     private enum DragMode {
@@ -85,15 +91,20 @@ public class RecentsCarouselView extends FrameLayout {
     private static final float MOMENTUM_OVERSHOOT_BRAKE_RATE = 13.0f;
     private static final float MOMENTUM_OVERSHOOT_STOP_VEL = 1.8f;
     private static final float WHEEL_DETENT_AMP = 0.075f;
+    private static final float EARLY_MOMENTUM_KILL_DIST = 1.85f;
+    private static final float EARLY_MOMENTUM_MIN_RATIO = 0.45f;
+    private static final float EARLY_MOMENTUM_ABS_SPEED = 6.2f;
+    private static final float SPRING_STIFFNESS = 520f;
+    private static final float SPRING_DAMPING_RATIO = 0.54f;
+    private static final float SPRING_STOP_POS_EPS = 0.003f;
+    private static final float SPRING_STOP_VEL_EPS = 0.10f;
     private static final float FLICK_NOTCH_CATCH_DIST = 0.16f;
     private static final float FLICK_NOTCH_CATCH_VEL = 2500f;
-    private static final int NOTCH_SNAP_DURATION_MS = 105;
     private static final int REFLOW_DURATION_MS = 220;
 
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
     private static final Interpolator DECELERATE = new DecelerateInterpolator(1.6f);
     private static final Interpolator OVERSHOOT = new OvershootInterpolator(1.1f);
-    private static final Interpolator NOTCH_SNAP = new OvershootInterpolator(0.70f);
     private static final Interpolator ELASTIC_SNAP = new OvershootInterpolator(1.35f);
     private static final Interpolator ACCELERATE = new AccelerateInterpolator(1.4f);
 
@@ -194,6 +205,7 @@ public class RecentsCarouselView extends FrameLayout {
     private String pendingDismissReplacementPojoId;
 
     private int flingTargetVisualIdx = -1;
+    private float flingInitialVelItemsPerSec = 0f;
     private boolean suppressContextMenuOnHorizontalSnap = false;
     private float rawScrollItemPos = 0f;
     private float wheelSpeedItemsPerSec = 0f;
@@ -206,6 +218,10 @@ public class RecentsCarouselView extends FrameLayout {
     private float brakingRawOvershoot = 0f;
     private float brakingVelItemsPerSec = 0f;
     private long lastBrakingTickMs = 0L;
+    private boolean springSnapActive = false;
+    private float springTargetPos = 0f;
+    private float springVelocityItemsPerSec = 0f;
+    private long lastSpringTickMs = 0L;
 
     private final Runnable stabilizeThumbnailsRunnable = new Runnable() {
         @Override
@@ -217,6 +233,43 @@ public class RecentsCarouselView extends FrameLayout {
     private final Runnable flingTick = new Runnable() {
         @Override
         public void run() {
+            if (springSnapActive) {
+                long now = SystemClock.uptimeMillis();
+                float dt = clamp((now - lastSpringTickMs) / 1000f, 0.001f, 0.033f);
+                lastSpringTickMs = now;
+                int subSteps = dt > 0.012f ? 2 : 1;
+                float subDt = dt / subSteps;
+                float omega = (float) Math.sqrt(SPRING_STIFFNESS);
+                float dampingCoeff = 2f * SPRING_DAMPING_RATIO * omega;
+                float oldPos = scrollItemPos;
+                for (int s = 0; s < subSteps; s++) {
+                    float accel = SPRING_STIFFNESS * (springTargetPos - scrollItemPos)
+                            - dampingCoeff * springVelocityItemsPerSec;
+                    springVelocityItemsPerSec += accel * subDt;
+                    scrollItemPos += springVelocityItemsPerSec * subDt;
+                }
+                float avgVel = (scrollItemPos - oldPos) / dt;
+                scrollSwayPx = clamp(avgVel * DrawableUtils.dpToPx(getContext(), 4.5f), -maxScrollSwayPx, maxScrollSwayPx);
+                updateWheelSpeed(oldPos, scrollItemPos);
+                thumbnailsSuppressed = isWheelMovingFast();
+                updateAutoSelectionFromScroll(true);
+
+                if (Math.abs(springTargetPos - scrollItemPos) < SPRING_STOP_POS_EPS
+                        && Math.abs(springVelocityItemsPerSec) < SPRING_STOP_VEL_EPS) {
+                    scrollItemPos = springTargetPos;
+                    springSnapActive = false;
+                    springVelocityItemsPerSec = 0f;
+                    updateAutoSelectionFromScroll(false);
+                    onWheelStabilized();
+                    releaseScrollSway();
+                    layoutCarousel();
+                    return;
+                }
+                layoutCarousel();
+                postOnAnimation(this);
+                return;
+            }
+
             if (overshootBrakingActive) {
                 long now = SystemClock.uptimeMillis();
                 float dt = clamp((now - lastBrakingTickMs) / 1000f, 0.001f, 0.05f);
@@ -277,10 +330,19 @@ public class RecentsCarouselView extends FrameLayout {
                 if (flingTargetVisualIdx >= 0) {
                     int targetIdx = flingTargetVisualIdx;
                     float dist = Math.abs(scrollItemPos - targetIdx);
-                    if ((dist <= 0.18f && dist < Math.abs(oldPos - targetIdx)) || dist <= 0.04f) {
+                    float curSpeedItems = scrollScroller.getCurrVelocity() / 1000f;
+                    boolean lostMostMomentum = flingInitialVelItemsPerSec > 0.1f
+                            && (curSpeedItems <= flingInitialVelItemsPerSec * EARLY_MOMENTUM_MIN_RATIO
+                            || curSpeedItems <= EARLY_MOMENTUM_ABS_SPEED);
+                    if ((dist <= EARLY_MOMENTUM_KILL_DIST && lostMostMomentum)
+                            || (dist <= 0.35f && dist < Math.abs(oldPos - targetIdx))
+                            || dist <= 0.04f) {
+                        float dir = (targetIdx >= scrollItemPos ? 1f : -1f);
+                        float transferVel = clamp(dir * curSpeedItems * 0.85f, -10.5f, 10.5f);
                         scrollScroller.abortAnimation();
                         flingTargetVisualIdx = -1;
-                        snapScrollTo(targetIdx, true, true);
+                        flingInitialVelItemsPerSec = 0f;
+                        startSpringSnap(targetIdx, transferVel);
                         releaseScrollSway();
                         return;
                     }
@@ -288,8 +350,10 @@ public class RecentsCarouselView extends FrameLayout {
                     int nearestIdx = Math.round(clamp(scrollItemPos, 0f, maxIdx));
                     if (Math.abs(scrollItemPos - nearestIdx) <= FLICK_NOTCH_CATCH_DIST
                             && scrollScroller.getCurrVelocity() < FLICK_NOTCH_CATCH_VEL) {
+                        float dir = (nearestIdx >= scrollItemPos ? 1f : -1f);
+                        float transferVel = clamp(dir * (scrollScroller.getCurrVelocity() / 1000f) * 0.85f, -8f, 8f);
                         scrollScroller.abortAnimation();
-                        snapScrollTo(nearestIdx, true, true);
+                        startSpringSnap(nearestIdx, transferVel);
                         releaseScrollSway();
                         return;
                     }
@@ -300,6 +364,7 @@ public class RecentsCarouselView extends FrameLayout {
             } else {
                 int targetIdx = flingTargetVisualIdx;
                 flingTargetVisualIdx = -1;
+                flingInitialVelItemsPerSec = 0f;
                 if (targetIdx >= 0) {
                     snapScrollTo(targetIdx, true, true);
                 } else {
@@ -317,6 +382,9 @@ public class RecentsCarouselView extends FrameLayout {
                 return;
             }
             longPressTriggered = true;
+            if (callback != null) {
+                callback.onUserInteracted();
+            }
             setGrabbedVisual(grabbedVisualIndex, false);
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
             int targetAdapterPos = visualToAdapterPos(downVisualIndex);
@@ -382,6 +450,9 @@ public class RecentsCarouselView extends FrameLayout {
             AppResult app = getSelectedAppResult();
             animateContextMenu(false);
             if (app != null) {
+                if (callback != null) {
+                    callback.onExternalNavigation();
+                }
                 app.openAppDetails(getContext());
             }
         });
@@ -389,6 +460,9 @@ public class RecentsCarouselView extends FrameLayout {
             AppResult app = getSelectedAppResult();
             animateContextMenu(false);
             if (app != null) {
+                if (callback != null) {
+                    callback.onExternalNavigation();
+                }
                 app.openUninstall(getContext());
             }
         });
@@ -407,6 +481,9 @@ public class RecentsCarouselView extends FrameLayout {
             AppResult app = getSelectedAppResult();
             animateContextMenu(false);
             if (app != null) {
+                if (callback != null) {
+                    callback.onExternalNavigation();
+                }
                 app.openSplitScreen(getContext(), bannerView);
             }
         });
@@ -414,6 +491,9 @@ public class RecentsCarouselView extends FrameLayout {
             AppResult app = getSelectedAppResult();
             animateContextMenu(false);
             if (app != null) {
+                if (callback != null) {
+                    callback.onExternalNavigation();
+                }
                 app.openPopupView(getContext(), bannerView);
             }
         });
@@ -478,11 +558,14 @@ public class RecentsCarouselView extends FrameLayout {
         scrollItemPos = 0f;
         rawScrollItemPos = 0f;
         flingTargetVisualIdx = -1;
+        flingInitialVelItemsPerSec = 0f;
         wheelSpeedItemsPerSec = 0f;
         lastVelSampleTimeMs = 0L;
         thumbnailsSuppressed = false;
         bannerBoundLightweight = false;
         overshootBrakingActive = false;
+        springSnapActive = false;
+        springVelocityItemsPerSec = 0f;
         grabScale = 1f;
         grabbed = false;
         grabbedVisualIndex = -1;
@@ -560,7 +643,7 @@ public class RecentsCarouselView extends FrameLayout {
             selectedPojoId = adapter.getItem(resolvedPos).getPojoId();
             scrollItemPos = resolvedPos;
         } else {
-            if (dragMode == DragMode.NONE && !overshootBrakingActive && scrollScroller.isFinished()) {
+            if (dragMode == DragMode.NONE && !overshootBrakingActive && !springSnapActive && scrollScroller.isFinished()) {
                 scrollItemPos = clamp(resolvedPos, 0f, count - 1);
             } else {
                 scrollItemPos = clamp(scrollItemPos, 0f, count - 1);
@@ -691,6 +774,7 @@ public class RecentsCarouselView extends FrameLayout {
         super.onDetachedFromWindow();
         pendingNotTouchedAction = null;
         overshootBrakingActive = false;
+        springSnapActive = false;
         pendingReflowAfterDismiss = false;
         pendingDismissReplacementPojoId = null;
         reflowStarts.clear();
@@ -777,7 +861,10 @@ public class RecentsCarouselView extends FrameLayout {
         longPressTriggered = false;
         dismissHapticFired = false;
         flingTargetVisualIdx = -1;
+        flingInitialVelItemsPerSec = 0f;
         overshootBrakingActive = false;
+        springSnapActive = false;
+        springVelocityItemsPerSec = 0f;
         suppressContextMenuOnHorizontalSnap = false;
         rawScrollItemPos = unmapScrollPos(scrollItemPos, Math.max(0, getItemCount() - 1));
         wheelSpeedItemsPerSec = 0f;
@@ -818,6 +905,9 @@ public class RecentsCarouselView extends FrameLayout {
                     animateHorizontalTo(0f);
                 }
                 dragMode = DragMode.SCROLL_VERTICAL;
+                if (callback != null) {
+                    callback.onUserInteracted();
+                }
             } else if (Math.abs(dx) > touchSlop && Math.abs(dx) > Math.abs(dy) * 1.15f) {
                 removeCallbacks(longPressRunnable);
                 swipeStartX = downX + (dx >= 0f ? touchSlop : -touchSlop);
@@ -846,6 +936,9 @@ public class RecentsCarouselView extends FrameLayout {
                         setGrabbedVisual(grabbedVisualIndex, false);
                     }
                     dragMode = DragMode.SWIPE_DISMISS;
+                }
+                if (callback != null) {
+                    callback.onUserInteracted();
                 }
             }
         }
@@ -939,7 +1032,9 @@ public class RecentsCarouselView extends FrameLayout {
                 int rawFinalY = scrollScroller.getFinalY();
                 if (rawFinalY < 0 || rawFinalY > maxIdx * 1000) {
                     flingTargetVisualIdx = -1;
+                    flingInitialVelItemsPerSec = Math.abs(velMilli / 1000f);
                     overshootBrakingActive = false;
+                    springSnapActive = false;
                     postOnAnimation(flingTick);
                 } else {
                     int currentIdx = Math.round(clamp(scrollItemPos, 0f, maxIdx));
@@ -947,10 +1042,14 @@ public class RecentsCarouselView extends FrameLayout {
                     if (targetIdx == currentIdx) {
                         targetIdx = (int) clamp(currentIdx + (vy < 0f ? 1f : -1f), 0f, maxIdx);
                     }
-                    if (Math.abs(targetIdx - scrollItemPos) <= 1.15f) {
+                    float remaining = Math.abs(targetIdx - scrollItemPos);
+                    if (remaining <= EARLY_MOMENTUM_KILL_DIST) {
                         scrollScroller.abortAnimation();
                         flingTargetVisualIdx = -1;
-                        snapScrollTo(targetIdx, true, true);
+                        flingInitialVelItemsPerSec = 0f;
+                        float dir = (targetIdx >= scrollItemPos ? 1f : -1f);
+                        float transferVel = dir * clamp(Math.abs(velMilli / 1000f) * 0.72f, 4.8f, 10.5f);
+                        startSpringSnap(targetIdx, transferVel);
                         releaseScrollSway();
                     } else {
                         int boundY = targetIdx * 1000;
@@ -959,16 +1058,21 @@ public class RecentsCarouselView extends FrameLayout {
                         scrollScroller.abortAnimation();
                         scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, minBound, maxBound, 0, 0);
                         flingTargetVisualIdx = targetIdx;
+                        flingInitialVelItemsPerSec = Math.abs(velMilli / 1000f);
+                        springSnapActive = false;
                         postOnAnimation(flingTick);
                     }
                 }
-            } else if (Math.abs(vy) >= minFlingVelocity * 0.28f) {
+            } else if (Math.abs(vy) >= minFlingVelocity * 0.25f) {
                 int nearest = Math.round(clamp(scrollItemPos, 0f, maxIdx));
                 int dir = vy < 0f ? 1 : -1;
-                int target = (nearest - scrollItemPos) * dir <= 0.15f
+                int target = (nearest - scrollItemPos) * dir <= 0.18f
                         ? (int) clamp(nearest + dir, 0f, maxIdx)
                         : nearest;
-                snapScrollTo(target, true, true);
+                float pxPerItem = Math.max(1f, unfocusedHeightPx + itemGapPx);
+                float kickDir = (target >= scrollItemPos ? 1f : -1f);
+                float startVel = kickDir * clamp(Math.abs(vy / pxPerItem), 4.8f, 9.5f);
+                startSpringSnap(target, startVel);
                 releaseScrollSway();
             } else {
                 snapScrollToNearest(true);
@@ -1150,7 +1254,9 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     private boolean isWheelMovingFast() {
-        return flingTargetVisualIdx >= 0 || wheelSpeedItemsPerSec >= FAST_WHEEL_ITEMS_PER_SEC;
+        return flingTargetVisualIdx >= 0
+                || wheelSpeedItemsPerSec >= FAST_WHEEL_ITEMS_PER_SEC
+                || (springSnapActive && Math.abs(springVelocityItemsPerSec) >= FAST_WHEEL_ITEMS_PER_SEC);
     }
 
     private void scheduleThumbnailStabilize() {
@@ -1171,6 +1277,30 @@ public class RecentsCarouselView extends FrameLayout {
         }
     }
 
+    private void startSpringSnap(float targetVisualPos, float initialVelocityItemsPerSec) {
+        removeCallbacks(flingTick);
+        cancelAnimator(scrollAnimator);
+        overshootBrakingActive = false;
+        if (!scrollScroller.isFinished()) {
+            scrollScroller.abortAnimation();
+        }
+        springTargetPos = targetVisualPos;
+        springVelocityItemsPerSec = initialVelocityItemsPerSec;
+        if (Math.abs(springTargetPos - scrollItemPos) < SPRING_STOP_POS_EPS
+                && Math.abs(springVelocityItemsPerSec) < SPRING_STOP_VEL_EPS) {
+            scrollItemPos = springTargetPos;
+            springSnapActive = false;
+            springVelocityItemsPerSec = 0f;
+            updateAutoSelectionFromScroll(false);
+            onWheelStabilized();
+            layoutCarousel();
+            return;
+        }
+        springSnapActive = true;
+        lastSpringTickMs = SystemClock.uptimeMillis();
+        postOnAnimation(flingTick);
+    }
+
     private void snapScrollToNearest(boolean elastic) {
         int count = getItemCount();
         if (count == 0) {
@@ -1182,6 +1312,9 @@ public class RecentsCarouselView extends FrameLayout {
 
     private void snapScrollTo(float targetVisualPos, boolean elastic, final boolean updateAutoSelect) {
         overshootBrakingActive = false;
+        springSnapActive = false;
+        springVelocityItemsPerSec = 0f;
+        removeCallbacks(flingTick);
         if (Math.abs(scrollItemPos - targetVisualPos) < 0.002f) {
             scrollItemPos = targetVisualPos;
             if (updateAutoSelect) {
@@ -1191,11 +1324,13 @@ public class RecentsCarouselView extends FrameLayout {
             layoutCarousel();
             return;
         }
+        float dist = Math.abs(targetVisualPos - scrollItemPos);
         boolean isEdgeSpring = elastic && (scrollItemPos < 0f || scrollItemPos > Math.max(0, getItemCount() - 1));
+        long duration = isEdgeSpring ? 210L : (elastic ? Math.round(clamp(175f + dist * 40f, 180f, 235f)) : 185L);
         cancelAnimator(scrollAnimator);
         scrollAnimator = ValueAnimator.ofFloat(scrollItemPos, targetVisualPos);
-        scrollAnimator.setDuration(isEdgeSpring ? 205 : (elastic ? NOTCH_SNAP_DURATION_MS : 180));
-        scrollAnimator.setInterpolator(isEdgeSpring ? ELASTIC_SNAP : (elastic ? NOTCH_SNAP : FAST_OUT_SLOW_IN));
+        scrollAnimator.setDuration(duration);
+        scrollAnimator.setInterpolator(elastic ? ELASTIC_SNAP : FAST_OUT_SLOW_IN);
         scrollAnimator.addUpdateListener(anim -> {
             scrollItemPos = (float) anim.getAnimatedValue();
             if (updateAutoSelect) {

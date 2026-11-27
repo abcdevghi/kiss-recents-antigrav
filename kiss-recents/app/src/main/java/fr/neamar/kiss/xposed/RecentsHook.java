@@ -42,6 +42,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
     /** Tells the screen that recents was pressed: a second press goes to the previous app. Same as MainActivity.EXTRA_RECENTS_PRESSED. */
     private static final String EXTRA_RECENTS_PRESSED = "fr.neamar.kiss.RECENTS_PRESSED";
     private static final String EXTRA_HOOK_SOURCE = "fr.neamar.kiss.HOOK_SOURCE";
+    private static final String EXTRA_OPENED_FROM_HOME = "fr.neamar.kiss.OPENED_FROM_HOME";
     private static final String EXTRA_BRIDGE_BUNDLE = "fr.neamar.kiss.RECENTS_BRIDGE_BUNDLE";
     private static final String KEY_BRIDGE_BINDER = "bridge_binder";
     private static final String SOURCE_SYSTEM_UI = "systemui";
@@ -315,11 +316,12 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
             return false;
         }
         RecentsBridgeService.setHostContext(starter);
+        boolean openedFromHome = RecentsBridgeService.isHomeOnTop();
 
         Bundle noAnimOptions = createNoAnimOptions(starter);
         ComponentName target = cachedTargetComponent;
         if (target != null) {
-            if (tryStart(starter, target, noAnimOptions, hookSource)) {
+            if (tryStart(starter, target, noAnimOptions, hookSource, openedFromHome)) {
                 lastLaunchUptimeMs = now;
                 return true;
             }
@@ -329,7 +331,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
 
         for (String packageName : TARGET_PACKAGES) {
             ComponentName candidate = new ComponentName(packageName, TARGET_ACTIVITY);
-            if (tryStart(starter, candidate, noAnimOptions, hookSource)) {
+            if (tryStart(starter, candidate, noAnimOptions, hookSource, openedFromHome)) {
                 cachedTargetComponent = candidate;
                 lastLaunchUptimeMs = now;
                 return true;
@@ -338,12 +340,13 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
         return false;
     }
 
-    private static boolean tryStart(Context starter, ComponentName component, Bundle options, String hookSource) {
+    private static boolean tryStart(Context starter, ComponentName component, Bundle options, String hookSource, boolean openedFromHome) {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setComponent(component);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         intent.putExtra(EXTRA_RECENTS_PRESSED, true);
         intent.putExtra(EXTRA_HOOK_SOURCE, hookSource);
+        intent.putExtra(EXTRA_OPENED_FROM_HOME, openedFromHome);
 
         Bundle bridgeBundle = new Bundle();
         bridgeBundle.putBinder(KEY_BRIDGE_BINDER, RecentsBridgeService.getInstance());
