@@ -1,6 +1,5 @@
 package fr.neamar.kiss.xposed;
 
-import android.app.Activity;
 import android.app.ActivityOptions;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
@@ -12,8 +11,6 @@ import android.os.SystemClock;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -25,28 +22,24 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import fr.neamar.kiss.BuildConfig;
 
 /**
- * LSPosed module: the system's recents button opens KISS recents.
+ * LSPosed module: intercepts the 3-button recents action inside SystemUI and opens KISS recents.
  * <p>
- * The recents request goes SystemUI (Recents, OverviewProxyRecentsImpl) -> launcher
- * (TouchInteractionService) -> RecentsActivity. Each step is hooked separately, as it is not known
- * which of them exist on a given ROM; every hook that attaches is written to the LSPosed log.
- * A request is only swallowed when KISS recents was started, otherwise the system's recents opens.
+ * Stopping the request inside SystemUI (Recents, OverviewProxyRecentsImpl) prevents it from
+ * reaching any launcher's RecentsActivity. A request is only swallowed when KISS recents was
+ * started; otherwise the system's recents opens.
  * <p>
- * Scope: System UI and the launcher that hosts RecentsActivity (e.g. One UI Home).
+ * Scope: System UI ({@code com.android.systemui}) only.
  */
 public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackage {
 
     private static final String SYSTEM_UI = "com.android.systemui";
     private static final String[] TARGET_PACKAGES = {"claude.recents.kiss", "claude.recents.kiss.debug"};
     private static final String TARGET_ACTIVITY = "fr.neamar.kiss.MainActivity";
-    /** Tells the screen that recents was pressed: a second press goes to the previous app. Same as MainActivity.EXTRA_RECENTS_PRESSED. */
+    /** Tells the screen that recents was pressed: a second press goes to the previous/current app. Same as MainActivity.EXTRA_RECENTS_PRESSED. */
     private static final String EXTRA_RECENTS_PRESSED = "fr.neamar.kiss.RECENTS_PRESSED";
-    private static final String EXTRA_HOOK_SOURCE = "fr.neamar.kiss.HOOK_SOURCE";
     private static final String EXTRA_OPENED_FROM_HOME = "fr.neamar.kiss.OPENED_FROM_HOME";
     private static final String EXTRA_BRIDGE_BUNDLE = "fr.neamar.kiss.RECENTS_BRIDGE_BUNDLE";
     private static final String KEY_BRIDGE_BINDER = "bridge_binder";
-    private static final String SOURCE_SYSTEM_UI = "systemui";
-    private static final String SOURCE_LAUNCHER = "launcher";
 
     /** Suppresses duplicate hook callbacks inside the same process for a single physical press. */
     private static final long SAME_PROCESS_DEBOUNCE_MS = 100;
@@ -58,17 +51,11 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
             "com.android.systemui.recents.OverviewProxyRecentsImpl",
             "com.android.systemui.recents.Recents"
     };
-    private static final String TOUCH_INTERACTION_SERVICE = "com.android.quickstep.TouchInteractionService";
-    private static final String RECENTS_ACTIVITY = "com.android.quickstep.RecentsActivity";
     private static final String SPLIT_SCREEN_CONTROLLER = "com.android.wm.shell.splitscreen.SplitScreenController";
 
-    /** Diagnostics: which classes of SystemUI and of the launcher are looked at */
+    /** Diagnostics: which classes of SystemUI are looked at */
     private static final Pattern SYSTEM_UI_CLASS_PATTERN =
             Pattern.compile("recents|overview|navigationbar|navbar|keybutton|commandqueue", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LAUNCHER_CLASS_PATTERN =
-            Pattern.compile("quickstep.*(overview|recents|touchinteraction)", Pattern.CASE_INSENSITIVE);
-
-    private final Set<String> hookedBinderClasses = new HashSet<>();
 
     /** Cached across presses in this process to avoid reflection and failed package probes. */
     private static volatile Context cachedAppContext;
@@ -83,21 +70,19 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
+        if (!SYSTEM_UI.equals(lpparam.packageName)) {
+            return;
+        }
         HookLog.log("loaded in " + lpparam.packageName + " (process " + lpparam.processName + ")");
         try {
-            if (SYSTEM_UI.equals(lpparam.packageName)) {
-                hookSystemUi(lpparam.classLoader);
-            } else {
-                hookLauncher(lpparam.packageName, lpparam.classLoader);
-            }
+            hookSystemUi(lpparam.classLoader);
         } catch (Throwable t) {
             HookLog.log("failed in " + lpparam.packageName + ": " + t);
         }
     }
 
     /**
-     * Layer 1: the toggle/show request inside SystemUI. Covers the navigation bar button and the
-     * hardware key, and stops the request before the launcher hears of it.
+     * Intercept toggle/show recents requests inside SystemUI before they reach any launcher.
      */
     private void hookSystemUi(ClassLoader classLoader) {
         boolean hooked = false;
@@ -114,7 +99,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     Context ctx = readContextField(contextField, param.thisObject);
-                    intercept(param, ctx, SOURCE_SYSTEM_UI, label + ".toggleRecentApps");
+                    intercept(param, ctx, label + ".toggleRecentApps");
                 }
             })) {
                 HookLog.log("SystemUI: hooked " + className + ".toggleRecentApps");
@@ -125,7 +110,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     Context ctx = readContextField(contextField, param.thisObject);
-                    intercept(param, ctx, SOURCE_SYSTEM_UI, label + ".showRecentApps");
+                    intercept(param, ctx, label + ".showRecentApps");
                 }
             }, boolean.class)) {
                 HookLog.log("SystemUI: hooked " + className + ".showRecentApps(boolean)");
@@ -133,7 +118,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
             }
         }
         if (!hooked) {
-            HookLog.log("SystemUI: nothing hooked, the launcher hooks have to do it");
+            HookLog.log("SystemUI: nothing hooked");
         }
         hookSplitScreenController(classLoader);
         if (BuildConfig.DEBUG && ENABLE_DISCOVERY) {
@@ -160,93 +145,6 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
             HookLog.debug("SystemUI: hooked " + SPLIT_SCREEN_CONTROLLER + " constructors");
         } catch (Throwable t) {
             HookLog.log("SystemUI: cannot hook SplitScreenController: " + t);
-        }
-    }
-
-    /**
-     * Layers 2 and 3, only where the launcher's recents classes exist (they are ignored in any other app).
-     */
-    private void hookLauncher(String packageName, ClassLoader classLoader) {
-        // Layer 2: the call SystemUI makes into the launcher
-        Class<?> service = XposedHelpers.findClassIfExists(TOUCH_INTERACTION_SERVICE, classLoader);
-        if (service != null) {
-            try {
-                XposedHelpers.findAndHookMethod(service, "onBind", Intent.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Object binder = param.getResult();
-                        if (binder != null) {
-                            hookBinder(binder.getClass());
-                        }
-                    }
-                });
-                HookLog.log(packageName + ": hooked " + TOUCH_INTERACTION_SERVICE + ".onBind");
-            } catch (Throwable t) {
-                HookLog.log(packageName + ": cannot hook onBind: " + t);
-            }
-        }
-
-        // Layer 3: the recents screen itself. It is closed as soon as it opens.
-        final Class<?> recentsActivity = XposedHelpers.findClassIfExists(RECENTS_ACTIVITY, classLoader);
-        if ((service != null || recentsActivity != null) && BuildConfig.DEBUG && ENABLE_DISCOVERY) {
-            RecentsDiscovery.run(packageName, classLoader, LAUNCHER_CLASS_PATTERN);
-        }
-        if (recentsActivity != null) {
-            try {
-                XposedHelpers.findAndHookMethod(Activity.class, "onCreate", Bundle.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        if (!recentsActivity.isInstance(param.thisObject)) {
-                            return;
-                        }
-                        Activity activity = (Activity) param.thisObject;
-                        if (openKissRecents(activity, SOURCE_LAUNCHER)) {
-                            activity.overridePendingTransition(0, 0);
-                            activity.finish();
-                            HookLog.debug(packageName + ": RecentsActivity replaced onCreate");
-                        }
-                    }
-                });
-                XposedHelpers.findAndHookMethod(Activity.class, "onNewIntent", Intent.class, new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        if (!recentsActivity.isInstance(param.thisObject)) {
-                            return;
-                        }
-                        Activity activity = (Activity) param.thisObject;
-                        if (openKissRecents(activity, SOURCE_LAUNCHER)) {
-                            activity.overridePendingTransition(0, 0);
-                            activity.finish();
-                            HookLog.debug(packageName + ": RecentsActivity replaced onNewIntent");
-                        }
-                    }
-                });
-                HookLog.log(packageName + ": hooked " + RECENTS_ACTIVITY + " lifecycle");
-            } catch (Throwable t) {
-                HookLog.log(packageName + ": cannot hook RecentsActivity: " + t);
-            }
-        }
-    }
-
-    /**
-     * The binder that SystemUI calls is only known once the service has been bound: hook its class then.
-     */
-    private void hookBinder(Class<?> binderClass) {
-        synchronized (hookedBinderClasses) {
-            if (!hookedBinderClasses.add(binderClass.getName())) {
-                return;
-            }
-        }
-        final String label = "launcher " + binderClass.getSimpleName();
-        if (hookMethodIfPresent(binderClass, "onOverviewToggle", new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                intercept(param, null, SOURCE_LAUNCHER, label + ".onOverviewToggle");
-            }
-        })) {
-            HookLog.log("launcher: hooked " + binderClass.getName() + ".onOverviewToggle");
-        } else {
-            HookLog.log("launcher: cannot hook " + binderClass.getName() + ".onOverviewToggle");
         }
     }
 
@@ -294,8 +192,8 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
     /**
      * Open KISS recents instead of the system's recents, if it can be opened.
      */
-    private static void intercept(XC_MethodHook.MethodHookParam param, Context context, String hookSource, String logSource) {
-        if (openKissRecents(context, hookSource)) {
+    private static void intercept(XC_MethodHook.MethodHookParam param, Context context, String logSource) {
+        if (openKissRecents(context)) {
             param.setResult(null);
             HookLog.debug(logSource + ": replaced");
         } else {
@@ -303,7 +201,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
         }
     }
 
-    private static boolean openKissRecents(Context context, String hookSource) {
+    private static boolean openKissRecents(Context context) {
         long now = SystemClock.uptimeMillis();
         if (now - lastLaunchUptimeMs < SAME_PROCESS_DEBOUNCE_MS) {
             // Another hook in this same process already launched KISS recents for this press
@@ -321,7 +219,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
         Bundle noAnimOptions = createNoAnimOptions(starter);
         ComponentName target = cachedTargetComponent;
         if (target != null) {
-            if (tryStart(starter, target, noAnimOptions, hookSource, openedFromHome)) {
+            if (tryStart(starter, target, noAnimOptions, openedFromHome)) {
                 lastLaunchUptimeMs = now;
                 return true;
             }
@@ -331,7 +229,7 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
 
         for (String packageName : TARGET_PACKAGES) {
             ComponentName candidate = new ComponentName(packageName, TARGET_ACTIVITY);
-            if (tryStart(starter, candidate, noAnimOptions, hookSource, openedFromHome)) {
+            if (tryStart(starter, candidate, noAnimOptions, openedFromHome)) {
                 cachedTargetComponent = candidate;
                 lastLaunchUptimeMs = now;
                 return true;
@@ -340,12 +238,11 @@ public class RecentsHook implements IXposedHookZygoteInit, IXposedHookLoadPackag
         return false;
     }
 
-    private static boolean tryStart(Context starter, ComponentName component, Bundle options, String hookSource, boolean openedFromHome) {
+    private static boolean tryStart(Context starter, ComponentName component, Bundle options, boolean openedFromHome) {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setComponent(component);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         intent.putExtra(EXTRA_RECENTS_PRESSED, true);
-        intent.putExtra(EXTRA_HOOK_SOURCE, hookSource);
         intent.putExtra(EXTRA_OPENED_FROM_HOME, openedFromHome);
 
         Bundle bridgeBundle = new Bundle();

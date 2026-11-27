@@ -403,7 +403,6 @@
     <string name="xposed_description">Opens KISS recents when the recents button is pressed</string>
     <string-array name="xposed_scope">
         <item>com.android.systemui</item>
-        <item>com.sec.android.app.launcher</item>
     </string-array>
     <string name="menu_keep_alive">Don’t clear</string>
     <string name="menu_keep_alive_off">Allow clearing</string>

@@ -240,17 +240,8 @@ public class AppResult extends ResultWithTags<AppPojo> {
         final ImageView fallbackIconView = bannerView.findViewById(R.id.banner_fallback_icon);
         final View outlineView = bannerView.findViewById(R.id.banner_outline);
 
-        final boolean hasSnapshot = !skipHeavyVisuals && snapshot != null && !snapshot.isRecycled();
-        if (skipHeavyVisuals) {
-            snapshotView.setImageDrawable(null);
-            snapshotView.setColorFilter(null);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                snapshotView.setRenderEffect(null);
-            }
-            snapshotView.setVisibility(View.GONE);
-            fallbackIconView.setImageDrawable(null);
-            fallbackIconView.setVisibility(View.GONE);
-        } else if (hasSnapshot) {
+        final boolean hasSnapshot = snapshot != null && !snapshot.isRecycled();
+        if (hasSnapshot) {
             snapshotView.setImageBitmap(snapshot);
             snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -272,11 +263,16 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 snapshotView.setRenderEffect(null);
             }
             snapshotView.setVisibility(View.GONE);
-            fallbackIconView.setVisibility(View.VISIBLE);
-            if (!isHideIcons(context)) {
-                setAsyncDrawable(fallbackIconView);
-            } else {
+            if (skipHeavyVisuals) {
                 fallbackIconView.setImageDrawable(null);
+                fallbackIconView.setVisibility(View.GONE);
+            } else {
+                fallbackIconView.setVisibility(View.VISIBLE);
+                if (!isHideIcons(context)) {
+                    setAsyncDrawable(fallbackIconView);
+                } else {
+                    fallbackIconView.setImageDrawable(null);
+                }
             }
         }
 

@@ -6,6 +6,8 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
+import android.graphics.Matrix;
+import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.SparseArray;
@@ -128,6 +130,10 @@ public class RecentsCarouselView extends FrameLayout {
     private final Set<Integer> inFlightSnapshots = new HashSet<>();
 
     private View bannerView;
+    private ImageView bannerSnapshotView;
+    private final Matrix bannerParallaxMatrix = new Matrix();
+    private float lastBannerParallaxDy = 0f;
+    private float lastBannerParallaxTx = 0f;
     private ContextMenuOverlay contextMenuLayer;
     private ImageButton btnInfo;
     private ImageButton btnUninstall;
@@ -553,6 +559,8 @@ public class RecentsCarouselView extends FrameLayout {
         selectedPojoId = null;
         selectedAdapterPos = -1;
         bannerBoundAdapterPos = -1;
+        lastBannerParallaxDy = 0f;
+        lastBannerParallaxTx = 0f;
         shrinkingAdapterPos = -1;
         shrinkProgress = 1f;
         scrollItemPos = 0f;
@@ -1745,6 +1753,9 @@ public class RecentsCarouselView extends FrameLayout {
             child.setAlpha(finalAlpha);
             child.setTranslationX(finalTx);
             child.setRotation(targetRotation);
+            if (isSelected) {
+                applyBannerThumbnailParallax(centerY - focalY, finalTx);
+            }
         }
 
         lastSelectedScreenCenterY = selectedScreenCenterY;
@@ -1866,6 +1877,7 @@ public class RecentsCarouselView extends FrameLayout {
     private View obtainAndBindBanner(int adapterPos) {
         if (bannerView == null) {
             bannerView = LayoutInflater.from(getContext()).inflate(R.layout.item_app_banner, this, false);
+            bannerSnapshotView = bannerView.findViewById(R.id.banner_snapshot);
             int idx = contextMenuLayer != null && contextMenuLayer.getParent() == this
                     ? Math.max(0, getChildCount() - 1) : -1;
             attachChild(bannerView, idx);
@@ -1885,6 +1897,7 @@ public class RecentsCarouselView extends FrameLayout {
     private void rebindBanner() {
         if (bannerView != null && selectedAdapterPos >= 0 && selectedAdapterPos < getItemCount()) {
             bindBannerAt(selectedAdapterPos);
+            applyBannerThumbnailParallax(lastBannerParallaxDy, lastBannerParallaxTx);
         }
     }
 
@@ -1894,13 +1907,61 @@ public class RecentsCarouselView extends FrameLayout {
         }
         bannerBoundAdapterPos = adapterPos;
         boolean skipHeavy = thumbnailsSuppressed;
-        bannerBoundLightweight = skipHeavy;
         Result<?> result = adapter.getItem(adapterPos);
         if (result instanceof AppResult) {
             AppResult appResult = (AppResult) result;
-            Bitmap cachedSnapshot = skipHeavy ? null : TaskSnapshotCache.get(appResult.getPojo().taskId);
+            Bitmap cachedSnapshot = TaskSnapshotCache.get(appResult.getPojo().taskId);
+            bannerBoundLightweight = skipHeavy && (cachedSnapshot == null || cachedSnapshot.isRecycled());
             appResult.displayBanner(getContext(), bannerView, cachedSnapshot, greyscaleSnapshots, skipHeavy);
+        } else {
+            bannerBoundLightweight = skipHeavy;
         }
+    }
+
+    private void applyBannerThumbnailParallax(float dyFromFocal, float cardTx) {
+        lastBannerParallaxDy = dyFromFocal;
+        lastBannerParallaxTx = cardTx;
+        if (bannerView == null) {
+            return;
+        }
+        if (bannerSnapshotView == null) {
+            bannerSnapshotView = bannerView.findViewById(R.id.banner_snapshot);
+        }
+        if (bannerSnapshotView == null || bannerSnapshotView.getVisibility() != View.VISIBLE) {
+            return;
+        }
+        Drawable drawable = bannerSnapshotView.getDrawable();
+        if (drawable == null) {
+            return;
+        }
+        int vw = bannerSnapshotView.getWidth();
+        int vh = bannerSnapshotView.getHeight();
+        if (vw <= 0 || vh <= 0) {
+            vw = bannerView.getWidth();
+            vh = bannerView.getHeight();
+        }
+        int bw = drawable.getIntrinsicWidth();
+        int bh = drawable.getIntrinsicHeight();
+        if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) {
+            return;
+        }
+        if (bannerSnapshotView.getScaleType() != ImageView.ScaleType.MATRIX) {
+            bannerSnapshotView.setScaleType(ImageView.ScaleType.MATRIX);
+        }
+        float baseScale = Math.max((float) vw / bw, (float) vh / bh);
+        float scale = Math.max(baseScale * 1.05f, Math.max((vw * 1.10f) / bw, (vh * 1.28f) / bh));
+        float scaledW = bw * scale;
+        float scaledH = bh * scale;
+        float slackX = Math.max(0f, (scaledW - vw) * 0.5f);
+        float slackY = Math.max(0f, (scaledH - vh) * 0.5f);
+        float panX = clamp(-cardTx * 0.24f, -slackX, slackX);
+        float panY = clamp(-dyFromFocal * 0.80f, -slackY, slackY);
+        float tx = (vw - scaledW) * 0.5f + panX;
+        float ty = (vh - scaledH) * 0.5f + panY;
+        bannerParallaxMatrix.reset();
+        bannerParallaxMatrix.setScale(scale, scale);
+        bannerParallaxMatrix.postTranslate(tx, ty);
+        bannerSnapshotView.setImageMatrix(bannerParallaxMatrix);
     }
 
     private View obtainAndBindUnfocused(int visualIdx, int adapterPos) {

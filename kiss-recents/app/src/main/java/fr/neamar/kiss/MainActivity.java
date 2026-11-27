@@ -59,12 +59,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     /** Put by the LSPosed hook on the intent it opens this screen with when the recents button is pressed */
     public static final String EXTRA_RECENTS_PRESSED = "fr.neamar.kiss.RECENTS_PRESSED";
-    public static final String EXTRA_HOOK_SOURCE = "fr.neamar.kiss.HOOK_SOURCE";
     public static final String EXTRA_OPENED_FROM_HOME = "fr.neamar.kiss.OPENED_FROM_HOME";
     /** Minimum gap between two human taps; anything faster is a duplicate hook callback. */
     private static final long DUPLICATE_BOUNCE_WINDOW_MS = 150;
-    /** Cross-process duplicate window when SystemUI and One UI Home both report a single physical press. */
-    private static final long CROSS_SOURCE_DEDUPE_WINDOW_MS = 250;
     /** A second press of recents within this window while Recents is open switches to the previous app. */
     private static final long DOUBLE_PRESS_WINDOW_MS = 1500;
     private static final long CACHED_TASKS_MAX_AGE_MS = 2500;
@@ -99,8 +96,6 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private long lastRecentsPress;
     private long sessionStartUptimeMs;
     private long lastPausedUptimeMs;
-    @Nullable
-    private String lastHookSource;
     @Nullable
     private BroadcastReceiver screenLockReceiver;
 
@@ -367,7 +362,6 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     private void resetRecentsPressState() {
         lastRecentsPress = 0L;
-        lastHookSource = null;
         sessionStartUptimeMs = 0L;
         sessionOpenedFromHome = false;
         userInteractedInRecents = false;
@@ -376,7 +370,6 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     /**
      * Single tap opens KISS Recents; a clean quick second tap while Recents is open jumps to the
      * previous app (or the current/last app when opened from Home, or after scrolling/interacting).
-     * Filters out duplicate callbacks fired for one physical press across SystemUI and One UI Home.
      */
     private void handleRecentsPress(@Nullable Intent intent, boolean created) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_RECENTS_PRESSED, false)) {
@@ -384,14 +377,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
         intent.removeExtra(EXTRA_RECENTS_PRESSED);
 
-        String hookSource = intent.getStringExtra(EXTRA_HOOK_SOURCE);
         boolean openedFromHome = intent.getBooleanExtra(EXTRA_OPENED_FROM_HOME, false);
         long now = SystemClock.uptimeMillis();
 
         if (created || !started) {
             sessionStartUptimeMs = now;
             lastRecentsPress = now;
-            lastHookSource = hookSource;
             sessionOpenedFromHome = openedFromHome;
             userInteractedInRecents = false;
             return;
@@ -401,18 +392,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         if (delta < DUPLICATE_BOUNCE_WINDOW_MS) {
             return;
         }
-        if (hookSource != null && lastHookSource != null
-                && !hookSource.equals(lastHookSource)
-                && delta < CROSS_SOURCE_DEDUPE_WINDOW_MS) {
-            return;
-        }
 
         boolean cleanDoubleTap = lastRecentsPress > 0L
                 && delta < DOUBLE_PRESS_WINDOW_MS
                 && !userInteractedInRecents;
         boolean targetCurrentApp = sessionOpenedFromHome || !cleanDoubleTap;
         lastRecentsPress = now;
-        lastHookSource = hookSource;
         switchToTaskAtOffset(targetCurrentApp ? 0 : 1);
     }
 
