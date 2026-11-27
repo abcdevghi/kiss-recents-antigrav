@@ -31,7 +31,6 @@ public class WallpaperClearLayout extends RelativeLayout {
     private boolean clearTransparentViewport = false;
     private boolean darkWallpaperOverlay = true;
     private boolean wallpaperBlurEnabled = false;
-    private boolean useNativeCrossWindowBlur = false;
 
     public WallpaperClearLayout(@NonNull Context context) {
         super(context);
@@ -60,10 +59,9 @@ public class WallpaperClearLayout extends RelativeLayout {
         }
     }
 
-    public void setWallpaperBlurEnabled(boolean enabled, boolean nativeCrossWindowBlur) {
-        if (wallpaperBlurEnabled != enabled || useNativeCrossWindowBlur != nativeCrossWindowBlur) {
+    public void setWallpaperBlurEnabled(boolean enabled) {
+        if (wallpaperBlurEnabled != enabled) {
             wallpaperBlurEnabled = enabled;
-            useNativeCrossWindowBlur = nativeCrossWindowBlur;
             invalidate();
         }
     }
@@ -72,7 +70,7 @@ public class WallpaperClearLayout extends RelativeLayout {
     protected void onDraw(@NonNull Canvas canvas) {
         if (clearTransparentViewport) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-            if (wallpaperBlurEnabled && !useNativeCrossWindowBlur) {
+            if (wallpaperBlurEnabled) {
                 Bitmap blurred = WallpaperBlurCache.get(getContext());
                 if (blurred != null && !blurred.isRecycled()) {
                     Appearance.drawCenterCrop(canvas, blurred, bitmapPaint, srcRect, dstRect);

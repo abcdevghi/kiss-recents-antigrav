@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.widget.ImageView;
+import android.window.SplashScreenView;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
@@ -74,10 +75,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private ListPopup mPopup;
     private String appearanceSignature;
     private boolean started;
+    private boolean resetCarouselOnNextResume;
     private boolean lastWallpaperEnabled;
     private boolean lastDimOverlay;
     private boolean lastBlurEnabled;
     private boolean lastNativeBlur;
+    private boolean lastHasCachedBlur;
     private long lastRecentsPress;
     private long sessionStartUptimeMs;
     @Nullable
@@ -103,10 +106,17 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             return;
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSplashScreen().setOnExitAnimationListener(SplashScreenView::remove);
+        }
+
         disableActivityTransition();
         UIColors.updateThemePrimaryColor(this);
 
         KissApplication.getApplication(this).getDataHandler().setMainActivity(this);
+
+        Intent launchIntent = getIntent();
+        RecentsBridgeClient.attachFromIntent(launchIntent);
 
         setContentView(R.layout.main);
         View contentView = findViewById(android.R.id.content);
@@ -150,6 +160,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
             @Override
             public void onLaunchSelected(Result<?> result, @Nullable View sourceView) {
+                resetCarouselOnNextResume = true;
                 resetRecentsPressState();
                 result.launch(MainActivity.this, sourceView, MainActivity.this);
             }
@@ -199,8 +210,6 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         // Right button: clear all recents
         clearButton.setOnClickListener(v -> clearAllRecents());
 
-        Intent launchIntent = getIntent();
-        RecentsBridgeClient.attachFromIntent(launchIntent);
         handleRecentsPress(launchIntent, true);
     }
 
@@ -231,6 +240,14 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             displayLoader(false);
         }
 
+        if (resetCarouselOnNextResume) {
+            resetCarouselOnNextResume = false;
+            if (carousel != null) {
+                carousel.closeContextMenu();
+                carousel.resetSelection();
+            }
+        }
+
         // Open apps change while we are in the background: always rebuild the list
         updateSearchRecords();
     }
@@ -239,6 +256,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     protected void onStop() {
         super.onStop();
         started = false;
+        resetCarouselOnNextResume = true;
         resetRecentsPressState();
         if (carousel != null) {
             carousel.closeContextMenu();
@@ -261,6 +279,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         disableActivityTransition();
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
+        syncWallpaperEffects(false);
         handleRecentsPress(intent, false);
     }
 
@@ -337,6 +356,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void launchTask(AppPojo target) {
+        resetCarouselOnNextResume = true;
         resetRecentsPressState();
         HistorySearcher.clearDismissed(target.packageName);
         if (target.taskId > 0) {
@@ -370,6 +390,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void goHome() {
+        resetCarouselOnNextResume = true;
         resetRecentsPressState();
         Intent home = new Intent(Intent.ACTION_MAIN);
         home.addCategory(Intent.CATEGORY_HOME);
@@ -382,34 +403,38 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
         boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
         boolean blurEnabled = Appearance.isBlurEnabled(prefs);
-        boolean nativeBlur = blurEnabled && Appearance.isCrossWindowBlurSupported(this);
+        boolean hasCachedBlur = blurEnabled && WallpaperBlurCache.get(this) != null;
+        boolean nativeBlur = blurEnabled && !hasCachedBlur && Appearance.isCrossWindowBlurSupported(this);
 
         if (forceApplyWindow
                 || wallpaperEnabled != lastWallpaperEnabled
                 || dimOverlay != lastDimOverlay
                 || blurEnabled != lastBlurEnabled
-                || nativeBlur != lastNativeBlur) {
+                || nativeBlur != lastNativeBlur
+                || hasCachedBlur != lastHasCachedBlur) {
             lastWallpaperEnabled = wallpaperEnabled;
             lastDimOverlay = dimOverlay;
             lastBlurEnabled = blurEnabled;
             lastNativeBlur = nativeBlur;
+            lastHasCachedBlur = hasCachedBlur;
             Appearance.applyWindowWallpaper(this, prefs);
         }
 
         if (rootLayout != null) {
             rootLayout.setClearTransparentViewport(wallpaperEnabled);
             rootLayout.setDarkWallpaperOverlay(dimOverlay);
-            rootLayout.setWallpaperBlurEnabled(wallpaperEnabled && blurEnabled, nativeBlur);
+            rootLayout.setWallpaperBlurEnabled(wallpaperEnabled && blurEnabled);
         }
         if (carousel != null) {
             carousel.setTransparentViewport(wallpaperEnabled);
         }
 
-        if (wallpaperEnabled && blurEnabled && !nativeBlur) {
+        if (wallpaperEnabled && blurEnabled) {
             WallpaperBlurCache.requestAsyncIfNeeded(this, () -> runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) {
                     return;
                 }
+                syncWallpaperEffects(false);
                 if (rootLayout != null) {
                     rootLayout.invalidate();
                 }

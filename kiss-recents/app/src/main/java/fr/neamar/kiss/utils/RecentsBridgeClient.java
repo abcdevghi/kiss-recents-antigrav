@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -288,7 +289,18 @@ public final class RecentsBridgeClient {
             }
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+            Bitmap decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+            if (decoded != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    && Math.max(decoded.getWidth(), decoded.getHeight()) < 900) {
+                Bitmap softened = DualKawaseBlur.blur(decoded, 1, 0.85f);
+                if (softened != null) {
+                    if (softened != decoded && !decoded.isRecycled()) {
+                        decoded.recycle();
+                    }
+                    return softened;
+                }
+            }
+            return decoded;
         } catch (RemoteException e) {
             bridgeBinder = null;
             return null;

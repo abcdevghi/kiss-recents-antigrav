@@ -139,8 +139,8 @@ public final class Appearance {
         if (isWallpaperEnabled(prefs)) {
             final boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
             final boolean blurEnabled = isBlurEnabled(prefs);
-            final boolean nativeBlur = blurEnabled && isCrossWindowBlurSupported(act);
-            final boolean fallbackBlur = blurEnabled && !nativeBlur;
+            final boolean hasCachedBlur = blurEnabled && WallpaperBlurCache.get(act) != null;
+            final boolean nativeBlur = blurEnabled && !hasCachedBlur && isCrossWindowBlurSupported(act);
 
             window.setFormat(PixelFormat.TRANSLUCENT);
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER);
@@ -156,7 +156,7 @@ public final class Appearance {
                 public void draw(@NonNull Canvas canvas) {
                     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
                     Activity host = actRef.get();
-                    if (fallbackBlur && host != null) {
+                    if (blurEnabled && host != null) {
                         Bitmap blurred = WallpaperBlurCache.get(host);
                         if (blurred != null && !blurred.isRecycled()) {
                             drawCenterCrop(canvas, blurred, bitmapPaint, srcRect, dstRect);

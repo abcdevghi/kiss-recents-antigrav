@@ -51,7 +51,7 @@ public final class WallpaperBlurCache {
                 if (raw == null) {
                     return;
                 }
-                Bitmap blurred = DualKawaseBlur.blur(raw, 3, 1.35f);
+                Bitmap blurred = DualKawaseBlur.blur(raw, 4, 1.75f);
                 if (raw != blurred && !raw.isRecycled()) {
                     raw.recycle();
                 }

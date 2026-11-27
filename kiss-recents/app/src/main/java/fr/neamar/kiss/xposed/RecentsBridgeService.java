@@ -2,12 +2,14 @@ package fr.neamar.kiss.xposed;
 
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
+import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.ColorSpace;
 import android.graphics.Rect;
@@ -19,6 +21,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
+import android.os.ParcelFileDescriptor;
 
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
@@ -486,11 +489,15 @@ final class RecentsBridgeService extends Binder {
                     snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false);
                 }
             }
-            if (snapshot == null && takeTaskSnapshotMethod != null) {
+            if ((snapshot == null || isLowResolutionSnapshot(snapshot)) && takeTaskSnapshotMethod != null) {
+                Object liveSnapshot;
                 if (takeTaskSnapshotMethod.getParameterCount() == 2) {
-                    snapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId, true);
+                    liveSnapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId, true);
                 } else {
-                    snapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId);
+                    liveSnapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId);
+                }
+                if (liveSnapshot != null) {
+                    snapshot = liveSnapshot;
                 }
             }
         } catch (Throwable t) {
@@ -571,12 +578,24 @@ final class RecentsBridgeService extends Binder {
         }
     }
 
+    private static boolean isLowResolutionSnapshot(Object snapshot) {
+        try {
+            Method m = snapshot.getClass().getMethod("isLowResolution");
+            Object res = m.invoke(snapshot);
+            return Boolean.TRUE.equals(res);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private static byte[] getWallpaperBitmapBytes() {
         Context ctx = resolveHostContext();
         if (ctx == null) {
             return null;
         }
         long token = Binder.clearCallingIdentity();
+        Bitmap decodedFileBitmap = null;
+        Bitmap copiedSoftBitmap = null;
         Bitmap rendered = null;
         Bitmap scaled = null;
         try {
@@ -584,25 +603,83 @@ final class RecentsBridgeService extends Binder {
             if (wm == null) {
                 return null;
             }
-            Drawable drawable = wm.getDrawable();
-            if (drawable == null) {
+            Bitmap outBitmap = null;
+
+            // 1. Prefer reading the backed system wallpaper file directly (works for static wallpapers on Android 13+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try (ParcelFileDescriptor pfd = wm.getWallpaperFile(WallpaperManager.FLAG_SYSTEM)) {
+                    if (pfd != null) {
+                        decodedFileBitmap = decodeSampledWallpaper(pfd);
+                        outBitmap = decodedFileBitmap;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
+            // 2. Fallback: WallpaperManager.getBitmap(false)
+            if (outBitmap == null) {
+                try {
+                    Method getBitmap = wm.getClass().getMethod("getBitmap", boolean.class);
+                    Object bmpObj = getBitmap.invoke(wm, false);
+                    if (bmpObj instanceof Bitmap) {
+                        outBitmap = (Bitmap) bmpObj;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
+            // 3. Fallback: getDrawable() / peekDrawable() / live wallpaper thumbnail
+            if (outBitmap == null) {
+                Drawable drawable = null;
+                try {
+                    drawable = wm.getDrawable();
+                } catch (Throwable ignored) {
+                }
+                if (drawable == null) {
+                    try {
+                        drawable = wm.peekDrawable();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (drawable == null) {
+                    try {
+                        WallpaperInfo info = wm.getWallpaperInfo();
+                        if (info != null && ctx.getPackageManager() != null) {
+                            drawable = info.loadThumbnail(ctx.getPackageManager());
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (drawable == null) {
+                    return null;
+                }
+                if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
+                    outBitmap = ((BitmapDrawable) drawable).getBitmap();
+                } else {
+                    int dw = drawable.getIntrinsicWidth() > 1 ? drawable.getIntrinsicWidth() : MAX_WALLPAPER_PX;
+                    int dh = drawable.getIntrinsicHeight() > 1 ? drawable.getIntrinsicHeight() : MAX_WALLPAPER_PX;
+                    float scale = Math.min(1f, (float) MAX_WALLPAPER_PX / Math.max(dw, dh));
+                    int tw = Math.max(16, Math.round(dw * scale));
+                    int th = Math.max(16, Math.round(dh * scale));
+                    rendered = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(rendered);
+                    drawable.setBounds(0, 0, tw, th);
+                    drawable.draw(canvas);
+                    outBitmap = rendered;
+                }
+            }
+
+            if (outBitmap == null || outBitmap.isRecycled()) {
                 return null;
             }
-            Bitmap outBitmap;
-            if (drawable instanceof BitmapDrawable && ((BitmapDrawable) drawable).getBitmap() != null) {
-                outBitmap = ((BitmapDrawable) drawable).getBitmap();
-            } else {
-                int dw = drawable.getIntrinsicWidth() > 1 ? drawable.getIntrinsicWidth() : MAX_WALLPAPER_PX;
-                int dh = drawable.getIntrinsicHeight() > 1 ? drawable.getIntrinsicHeight() : MAX_WALLPAPER_PX;
-                float scale = Math.min(1f, (float) MAX_WALLPAPER_PX / Math.max(dw, dh));
-                int tw = Math.max(16, Math.round(dw * scale));
-                int th = Math.max(16, Math.round(dh * scale));
-                rendered = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888);
-                Canvas canvas = new Canvas(rendered);
-                drawable.setBounds(0, 0, tw, th);
-                drawable.draw(canvas);
-                outBitmap = rendered;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && outBitmap.getConfig() == Bitmap.Config.HARDWARE) {
+                copiedSoftBitmap = outBitmap.copy(Bitmap.Config.ARGB_8888, false);
+                if (copiedSoftBitmap == null) {
+                    return null;
+                }
+                outBitmap = copiedSoftBitmap;
             }
+
             int w = outBitmap.getWidth();
             int h = outBitmap.getHeight();
             if (w > MAX_WALLPAPER_PX || h > MAX_WALLPAPER_PX) {
@@ -627,8 +704,32 @@ final class RecentsBridgeService extends Binder {
             if (rendered != null && !rendered.isRecycled()) {
                 rendered.recycle();
             }
+            if (copiedSoftBitmap != null && !copiedSoftBitmap.isRecycled()) {
+                copiedSoftBitmap.recycle();
+            }
+            if (decodedFileBitmap != null && !decodedFileBitmap.isRecycled()) {
+                decodedFileBitmap.recycle();
+            }
             Binder.restoreCallingIdentity(token);
         }
+    }
+
+    private static Bitmap decodeSampledWallpaper(ParcelFileDescriptor pfd) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFileDescriptor(pfd.getFileDescriptor(), null, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null;
+        }
+        int sampleSize = 1;
+        int maxSide = Math.max(bounds.outWidth, bounds.outHeight);
+        while (maxSide / (sampleSize * 2) >= MAX_WALLPAPER_PX) {
+            sampleSize *= 2;
+        }
+        BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+        decodeOpts.inSampleSize = sampleSize;
+        decodeOpts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        return BitmapFactory.decodeFileDescriptor(pfd.getFileDescriptor(), null, decodeOpts);
     }
 
     private static Context resolveHostContext() {

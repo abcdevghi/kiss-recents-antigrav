@@ -14,6 +14,8 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Outline;
 import android.graphics.Rect;
+import android.graphics.RenderEffect;
+import android.graphics.Shader;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -242,17 +244,33 @@ public class AppResult extends ResultWithTags<AppPojo> {
         if (skipHeavyVisuals) {
             snapshotView.setImageDrawable(null);
             snapshotView.setColorFilter(null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                snapshotView.setRenderEffect(null);
+            }
             snapshotView.setVisibility(View.GONE);
             fallbackIconView.setImageDrawable(null);
             fallbackIconView.setVisibility(View.GONE);
         } else if (hasSnapshot) {
             snapshotView.setImageBitmap(snapshot);
             snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                int maxDim = Math.max(snapshot.getWidth(), snapshot.getHeight());
+                if (maxDim < 1080) {
+                    float blurDp = maxDim < 720 ? 3.2f : 2.0f;
+                    float blurPx = Math.max(2f, blurDp * context.getResources().getDisplayMetrics().density);
+                    snapshotView.setRenderEffect(RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP));
+                } else {
+                    snapshotView.setRenderEffect(null);
+                }
+            }
             snapshotView.setVisibility(View.VISIBLE);
             fallbackIconView.setVisibility(View.GONE);
         } else {
             snapshotView.setImageDrawable(null);
             snapshotView.setColorFilter(null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                snapshotView.setRenderEffect(null);
+            }
             snapshotView.setVisibility(View.GONE);
             fallbackIconView.setVisibility(View.VISIBLE);
             if (!isHideIcons(context)) {
