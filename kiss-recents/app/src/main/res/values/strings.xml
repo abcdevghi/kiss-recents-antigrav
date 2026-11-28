@@ -457,7 +457,7 @@
     <string name="more_banners_all_title">Preview banners for all apps</string>
     <string name="more_banners_all_summary">Use the shorter preview banner for every unfocused app instead of only adjacent ones</string>
     <string name="more_banners_calculated_size_title">Calculated banner size</string>
-    <string name="more_banners_calculated_size_summary">Smoothly interpolate card height by position between standard, unfocused, and compact icon-height sizes</string>
+    <string name="more_banners_calculated_size_summary">Use a unified banner card for every app and smoothly scale height by position between full, medium, and compact sizes</string>
     <string name="selected_banner_icon_title">Show icon on selected card</string>
     <string name="selected_banner_icon_summary">Display the app icon next to the title on the expanded preview card</string>
     <string name="selected_banner_outline_title">Colored card outline</string>
