@@ -43,6 +43,7 @@ import fr.neamar.kiss.searcher.HistorySearcher;
 import fr.neamar.kiss.searcher.QueryInterface;
 import fr.neamar.kiss.searcher.SearchHandler;
 import fr.neamar.kiss.searcher.Searcher;
+import fr.neamar.kiss.settings.ConfigSlots;
 import fr.neamar.kiss.ui.ListPopup;
 import fr.neamar.kiss.ui.RecentsCarouselView;
 import fr.neamar.kiss.ui.WallpaperClearLayout;
@@ -97,6 +98,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private boolean resetCarouselOnNextResume;
     private boolean lastFocusCurrentApp;
     private boolean lastReverseOrder;
+    private boolean lastSelectedBanner;
+    private boolean lastCarouselArc;
     private boolean lastWallpaperEnabled;
     private boolean lastDimOverlay;
     private boolean lastBlurEnabled;
@@ -113,6 +116,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean isKissApp = getApplication() instanceof KissApplication;
         if (isKissApp) {
             prefs = PreferenceManager.getDefaultSharedPreferences(this);
+            ConfigSlots.migrateLegacyPrefsIfNeeded(prefs);
             // Theme must be applied before super.onCreate() so window attributes initialize cleanly
             Appearance.applyTheme(this, prefs);
             appearanceSignature = Appearance.signature(prefs);
@@ -417,36 +421,62 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         if (prefs == null || carousel == null) {
             return;
         }
+        ConfigSlots.migrateLegacyPrefsIfNeeded(prefs);
+
         boolean focusCurrent = prefs.getBoolean("focus-current-app", false);
         boolean reverseOrder = prefs.getBoolean("reverse-order", false);
+        boolean ramHistorySort = prefs.getBoolean("ram-history-sort", false);
+        boolean ramHistorySeparators = prefs.getBoolean("ram-history-separators", false);
+
+        boolean selectedBanner = prefs.getBoolean("selected-banner", false);
         boolean moreBanners = prefs.getBoolean("more-banners", false);
         boolean moreBannersAll = prefs.getBoolean("more-banners-all", false);
-        boolean showScrollbar = prefs.getBoolean("show-scrollbar", false);
-        boolean openSesame = prefs.getBoolean("open-sesame", false);
-        boolean greyscale = prefs.getBoolean("snapshot-greyscale", true);
-        boolean thumbnailParallax = prefs.getBoolean("thumbnail-parallax", true);
-        boolean clearDeadThumbnails = prefs.getBoolean("clear-dead-thumbnails", false);
         boolean selectedBannerIcon = prefs.getBoolean("selected-banner-icon", false);
-        boolean selectedBannerNoOutline = prefs.getBoolean("selected-banner-no-outline", false);
-        boolean ramHistorySort = prefs.getBoolean("ram-history-sort", false);
+        boolean selectedBannerOutline = prefs.getBoolean("selected-banner-outline", false);
+        boolean greyscale = prefs.getBoolean("snapshot-greyscale", false);
+        boolean thumbnailParallax = prefs.getBoolean("thumbnail-parallax", false);
+        boolean clearDeadThumbnails = prefs.getBoolean("clear-dead-thumbnails", false);
 
-        if (!initial && (focusCurrent != lastFocusCurrentApp || reverseOrder != lastReverseOrder)) {
+        boolean carouselArc = prefs.getBoolean("carousel-arc", false);
+        boolean carouselDepthEffects = prefs.getBoolean("carousel-depth-effects", false);
+        boolean tiltSwayOvershoot = prefs.getBoolean("tilt-sway-overshoot", false);
+        boolean tactileScrollSnapping = prefs.getBoolean("tactile-scroll-snapping", false);
+        boolean launchEntranceAnim = prefs.getBoolean("launch-entrance-anim", false);
+        boolean openSesame = prefs.getBoolean("open-sesame", false);
+        boolean curvedContextMenu = prefs.getBoolean("curved-context-menu", false);
+        boolean showScrollbar = prefs.getBoolean("show-scrollbar", false);
+
+        if (!initial && (focusCurrent != lastFocusCurrentApp
+                || reverseOrder != lastReverseOrder
+                || selectedBanner != lastSelectedBanner
+                || carouselArc != lastCarouselArc)) {
             resetCarouselOnNextResume = true;
         }
         lastFocusCurrentApp = focusCurrent;
         lastReverseOrder = reverseOrder;
+        lastSelectedBanner = selectedBanner;
+        lastCarouselArc = carouselArc;
 
+        carousel.setSelectedBanner(selectedBanner);
+        carousel.setMoreBanners(moreBanners, moreBannersAll);
+        carousel.setSelectedBannerIcon(selectedBannerIcon);
+        carousel.setSelectedBannerOutline(selectedBannerOutline);
         carousel.setGreyscaleSnapshots(greyscale);
         carousel.setThumbnailParallax(thumbnailParallax);
         carousel.setClearDeadThumbnails(clearDeadThumbnails);
-        carousel.setSelectedBannerIcon(selectedBannerIcon);
-        carousel.setSelectedBannerNoOutline(selectedBannerNoOutline);
-        carousel.setRamHistorySort(ramHistorySort);
+
+        carousel.setCarouselArc(carouselArc);
+        carousel.setCarouselDepthEffects(carouselDepthEffects);
+        carousel.setTiltSwayOvershoot(tiltSwayOvershoot);
+        carousel.setTactileScrollSnapping(tactileScrollSnapping);
+        carousel.setLaunchEntranceAnim(launchEntranceAnim);
+        carousel.setOpenSesame(openSesame);
+        carousel.setCurvedContextMenu(curvedContextMenu);
+        carousel.setShowScrollbar(showScrollbar);
+
+        carousel.setRamHistorySort(ramHistorySort, ramHistorySeparators);
         carousel.setFocusCurrentApp(focusCurrent);
         carousel.setReverseOrder(reverseOrder);
-        carousel.setMoreBanners(moreBanners, moreBannersAll);
-        carousel.setShowScrollbar(showScrollbar);
-        carousel.setOpenSesame(openSesame);
     }
 
     private void resetOpenSesameUi() {
@@ -685,7 +715,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     private void syncWallpaperEffects(boolean forceApplyWindow) {
         boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
-        boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
+        boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", false);
         boolean blurEnabled = Appearance.isBlurEnabled(prefs);
         boolean hasCachedBlur = blurEnabled && WallpaperBlurCache.get(this) != null;
         boolean nativeBlur = blurEnabled && !hasCachedBlur && Appearance.isCrossWindowBlurSupported(this);

@@ -18,7 +18,7 @@ public abstract class ResultWithTags<T extends PojoWithTags> extends Result<T> {
     }
 
     public static boolean isShowEntryRam(@NonNull Context context) {
-        return PreferenceManager.getDefaultSharedPreferences(context).getBoolean("show-entry-ram", true);
+        return PreferenceManager.getDefaultSharedPreferences(context).getBoolean("show-entry-ram", false);
     }
 
     /**

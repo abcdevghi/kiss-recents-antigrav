@@ -29,7 +29,7 @@ public class WallpaperClearLayout extends RelativeLayout {
     private final Rect dstRect = new Rect();
 
     private boolean clearTransparentViewport = false;
-    private boolean darkWallpaperOverlay = true;
+    private boolean darkWallpaperOverlay = false;
     private boolean wallpaperBlurEnabled = false;
 
     public WallpaperClearLayout(@NonNull Context context) {

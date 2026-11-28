@@ -370,7 +370,8 @@ public class HistorySearcher extends Searcher {
             lastTasks = Collections.unmodifiableList(new ArrayList<>(result.tasks));
             lastFetchUptimeMs = SystemClock.uptimeMillis();
 
-            if (bridgeAvailable && !result.tasks.isEmpty()) {
+            boolean selectedBanner = prefs.getBoolean("selected-banner", false);
+            if (bridgeAvailable && selectedBanner && !result.tasks.isEmpty()) {
                 boolean clearDead = prefs.getBoolean("clear-dead-thumbnails", false);
                 boolean moreBanners = prefs.getBoolean("more-banners", false);
                 boolean moreBannersAll = moreBanners && prefs.getBoolean("more-banners-all", false);

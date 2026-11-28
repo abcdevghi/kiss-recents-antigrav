@@ -1,17 +1,121 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"
     app:title="@string/activity_setting">
-    <fr.neamar.kiss.preference.RootModeSwitch
-        app:defaultValue="false"
-        app:key="root-mode"
-        app:summary="@string/root_mode_desc"
-        app:title="@string/root_mode_name" />
-    <Preference
-        app:key="import-appearance"
-        app:summary="@string/import_appearance_summary"
-        app:title="@string/import_appearance_title" />
 
-    <PreferenceCategory app:title="@string/pref_category_carousel">
+    <PreferenceCategory app:title="@string/pref_category_configs">
+        <Preference
+            app:key="config-slot-1"
+            app:title="@string/config_slot_empty_title" />
+        <Preference
+            app:key="config-slot-2"
+            app:title="@string/config_slot_empty_title" />
+        <Preference
+            app:key="config-slot-3"
+            app:title="@string/config_slot_empty_title" />
+        <Preference
+            app:key="config-slot-4"
+            app:title="@string/config_slot_empty_title" />
+        <Preference
+            app:key="reset-empty-config"
+            app:summary="@string/reset_empty_config_summary"
+            app:title="@string/reset_empty_config_title" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_category_cards_previews">
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="selected-banner"
+            app:summary="@string/selected_banner_summary"
+            app:title="@string/selected_banner_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="more-banners"
+            app:summary="@string/more_banners_summary"
+            app:title="@string/more_banners_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="more-banners"
+            app:key="more-banners-all"
+            app:summary="@string/more_banners_all_summary"
+            app:title="@string/more_banners_all_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="selected-banner-icon"
+            app:summary="@string/selected_banner_icon_summary"
+            app:title="@string/selected_banner_icon_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="selected-banner-outline"
+            app:summary="@string/selected_banner_outline_summary"
+            app:title="@string/selected_banner_outline_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="snapshot-greyscale"
+            app:summary="@string/snapshot_greyscale_summary"
+            app:title="@string/snapshot_greyscale_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="thumbnail-parallax"
+            app:summary="@string/thumbnail_parallax_summary"
+            app:title="@string/thumbnail_parallax_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="clear-dead-thumbnails"
+            app:summary="@string/clear_dead_thumbnails_summary"
+            app:title="@string/clear_dead_thumbnails_title" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_category_motion_effects">
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="carousel-arc"
+            app:summary="@string/carousel_arc_summary"
+            app:title="@string/carousel_arc_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="carousel-depth-effects"
+            app:summary="@string/carousel_depth_effects_summary"
+            app:title="@string/carousel_depth_effects_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="tilt-sway-overshoot"
+            app:summary="@string/tilt_sway_overshoot_summary"
+            app:title="@string/tilt_sway_overshoot_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="selected-banner"
+            app:key="tactile-scroll-snapping"
+            app:summary="@string/tactile_scroll_snapping_summary"
+            app:title="@string/tactile_scroll_snapping_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="launch-entrance-anim"
+            app:summary="@string/launch_entrance_anim_summary"
+            app:title="@string/launch_entrance_anim_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="open-sesame"
+            app:summary="@string/open_sesame_summary"
+            app:title="@string/open_sesame_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="curved-context-menu"
+            app:summary="@string/curved_context_menu_summary"
+            app:title="@string/curved_context_menu_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="show-scrollbar"
+            app:summary="@string/show_scrollbar_summary"
+            app:title="@string/show_scrollbar_title" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/pref_category_layout_sorting">
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
             app:key="focus-current-app"
@@ -24,55 +128,35 @@
             app:title="@string/reverse_order_title" />
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
-            app:key="more-banners"
-            app:summary="@string/more_banners_summary"
-            app:title="@string/more_banners_title" />
+            app:key="ram-history-sort"
+            app:summary="@string/ram_history_sort_summary"
+            app:title="@string/ram_history_sort_title" />
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
-            app:dependency="more-banners"
-            app:key="more-banners-all"
-            app:summary="@string/more_banners_all_summary"
-            app:title="@string/more_banners_all_title" />
+            app:dependency="ram-history-sort"
+            app:key="ram-history-separators"
+            app:summary="@string/ram_history_separators_summary"
+            app:title="@string/ram_history_separators_title" />
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
-            app:key="selected-banner-icon"
-            app:summary="@string/selected_banner_icon_summary"
-            app:title="@string/selected_banner_icon_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="false"
-            app:key="selected-banner-no-outline"
-            app:summary="@string/selected_banner_no_outline_summary"
-            app:title="@string/selected_banner_no_outline_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="false"
-            app:key="open-sesame"
-            app:summary="@string/open_sesame_summary"
-            app:title="@string/open_sesame_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="false"
-            app:key="show-scrollbar"
-            app:summary="@string/show_scrollbar_summary"
-            app:title="@string/show_scrollbar_title" />
+            app:key="clear-all-keep-history"
+            app:summary="@string/clear_all_keep_history_summary"
+            app:title="@string/clear_all_keep_history_title" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/pref_category_previews">
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="true"
-            app:key="snapshot-greyscale"
-            app:summary="@string/snapshot_greyscale_summary"
-            app:title="@string/snapshot_greyscale_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="true"
-            app:key="thumbnail-parallax"
-            app:summary="@string/thumbnail_parallax_summary"
-            app:title="@string/thumbnail_parallax_title" />
+    <PreferenceCategory app:title="@string/pref_category_memory_wallpaper">
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
-            app:key="clear-dead-thumbnails"
-            app:summary="@string/clear_dead_thumbnails_summary"
-            app:title="@string/clear_dead_thumbnails_title" />
+            app:key="show-entry-ram"
+            app:summary="@string/show_entry_ram_summary"
+            app:title="@string/show_entry_ram_title" />
         <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="true"
+            app:defaultValue="false"
+            app:key="show-total-ram"
+            app:summary="@string/show_total_ram_summary"
+            app:title="@string/show_total_ram_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
             app:key="wallpaper-dim-overlay"
             app:summary="@string/wallpaper_dim_overlay_summary"
             app:title="@string/wallpaper_dim_overlay_title" />
@@ -83,26 +167,15 @@
             app:title="@string/wallpaper_blur_title" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/pref_category_memory_sorting">
-        <androidx.preference.SwitchPreferenceCompat
+    <PreferenceCategory app:title="@string/pref_category_general">
+        <fr.neamar.kiss.preference.RootModeSwitch
             app:defaultValue="false"
-            app:key="show-total-ram"
-            app:summary="@string/show_total_ram_summary"
-            app:title="@string/show_total_ram_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="true"
-            app:key="show-entry-ram"
-            app:summary="@string/show_entry_ram_summary"
-            app:title="@string/show_entry_ram_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="false"
-            app:key="ram-history-sort"
-            app:summary="@string/ram_history_sort_summary"
-            app:title="@string/ram_history_sort_title" />
-        <androidx.preference.SwitchPreferenceCompat
-            app:defaultValue="false"
-            app:key="clear-all-keep-history"
-            app:summary="@string/clear_all_keep_history_summary"
-            app:title="@string/clear_all_keep_history_title" />
+            app:key="root-mode"
+            app:summary="@string/root_mode_desc"
+            app:title="@string/root_mode_name" />
+        <Preference
+            app:key="import-appearance"
+            app:summary="@string/import_appearance_summary"
+            app:title="@string/import_appearance_title" />
     </PreferenceCategory>
 </PreferenceScreen>

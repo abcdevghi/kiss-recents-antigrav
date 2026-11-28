@@ -137,7 +137,7 @@ public final class Appearance {
             return;
         }
         if (isWallpaperEnabled(prefs)) {
-            final boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", true);
+            final boolean dimOverlay = prefs.getBoolean("wallpaper-dim-overlay", false);
             final boolean blurEnabled = isBlurEnabled(prefs);
             final boolean hasCachedBlur = blurEnabled && WallpaperBlurCache.get(act) != null;
             final boolean nativeBlur = blurEnabled && !hasCachedBlur && isCrossWindowBlurSupported(act);
