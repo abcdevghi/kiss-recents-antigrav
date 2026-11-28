@@ -24,6 +24,7 @@ public final class RecentsBridgeClient {
 
     public static final String EXTRA_BRIDGE_BUNDLE = "fr.neamar.kiss.RECENTS_BRIDGE_BUNDLE";
     public static final String KEY_BRIDGE_BINDER = "bridge_binder";
+    public static final String KEY_NO_TRANSITION = "fr.neamar.kiss.NO_TRANSITION";
 
     private static final String DESCRIPTOR = "fr.neamar.kiss.xposed.IRecentsBridge";
     private static final int TX_GET_RECENT_TASKS = IBinder.FIRST_CALL_TRANSACTION;
@@ -273,6 +274,11 @@ public final class RecentsBridgeClient {
 
     @Nullable
     public static Bitmap getTaskSnapshot(int taskId) {
+        return getTaskSnapshot(taskId, 960, false);
+    }
+
+    @Nullable
+    public static Bitmap getTaskSnapshot(int taskId, int maxDimPx, boolean preferLowRes) {
         IBinder binder = bridgeBinder;
         if (binder == null || taskId <= 0) {
             return null;
@@ -282,6 +288,8 @@ public final class RecentsBridgeClient {
         try {
             data.writeInterfaceToken(DESCRIPTOR);
             data.writeInt(taskId);
+            data.writeInt(maxDimPx);
+            data.writeInt(preferLowRes ? 1 : 0);
             if (!binder.transact(TX_GET_TASK_SNAPSHOT, data, reply, 0)) {
                 return null;
             }
@@ -291,9 +299,9 @@ public final class RecentsBridgeClient {
                 return null;
             }
             BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
-            if (decoded != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+            if (decoded != null && !preferLowRes && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
                     && Math.max(decoded.getWidth(), decoded.getHeight()) < 900) {
                 Bitmap softened = DualKawaseBlur.blur(decoded, 1, 0.85f);
                 if (softened != null) {

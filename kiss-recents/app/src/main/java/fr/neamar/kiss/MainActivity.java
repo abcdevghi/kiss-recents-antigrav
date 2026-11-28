@@ -424,6 +424,11 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean showScrollbar = prefs.getBoolean("show-scrollbar", false);
         boolean openSesame = prefs.getBoolean("open-sesame", false);
         boolean greyscale = prefs.getBoolean("snapshot-greyscale", true);
+        boolean thumbnailParallax = prefs.getBoolean("thumbnail-parallax", true);
+        boolean clearDeadThumbnails = prefs.getBoolean("clear-dead-thumbnails", false);
+        boolean selectedBannerIcon = prefs.getBoolean("selected-banner-icon", false);
+        boolean selectedBannerNoOutline = prefs.getBoolean("selected-banner-no-outline", false);
+        boolean ramHistorySort = prefs.getBoolean("ram-history-sort", false);
 
         if (!initial && (focusCurrent != lastFocusCurrentApp || reverseOrder != lastReverseOrder)) {
             resetCarouselOnNextResume = true;
@@ -432,6 +437,11 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         lastReverseOrder = reverseOrder;
 
         carousel.setGreyscaleSnapshots(greyscale);
+        carousel.setThumbnailParallax(thumbnailParallax);
+        carousel.setClearDeadThumbnails(clearDeadThumbnails);
+        carousel.setSelectedBannerIcon(selectedBannerIcon);
+        carousel.setSelectedBannerNoOutline(selectedBannerNoOutline);
+        carousel.setRamHistorySort(ramHistorySort);
         carousel.setFocusCurrentApp(focusCurrent);
         carousel.setReverseOrder(reverseOrder);
         carousel.setMoreBanners(moreBanners, moreBannersAll);

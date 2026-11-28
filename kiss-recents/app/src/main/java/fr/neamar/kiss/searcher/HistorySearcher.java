@@ -21,6 +21,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import fr.neamar.kiss.DataHandler;
 import fr.neamar.kiss.KeepAlive;
@@ -36,7 +39,6 @@ import fr.neamar.kiss.utils.RecentsBridgeClient;
 import fr.neamar.kiss.utils.RunningApps;
 import fr.neamar.kiss.utils.TaskSnapshotCache;
 import fr.neamar.kiss.utils.UserHandle;
-import fr.neamar.kiss.utils.Utilities;
 
 /**
  * Builds the list of the main screen. When the Recents Binder bridge or root mode is on: the apps
@@ -61,9 +63,14 @@ public class HistorySearcher extends Searcher {
     private static final Set<String> dismissedPackages = ConcurrentHashMap.newKeySet();
     private static final Set<Integer> dismissedTaskIds = ConcurrentHashMap.newKeySet();
     private static final Object RUNNING_LOCK = new Object();
+    private static final ExecutorService SNAPSHOT_EXECUTOR = Executors.newFixedThreadPool(3);
 
     private static volatile List<AppPojo> lastTasks = Collections.emptyList();
     private static volatile long lastFetchUptimeMs = 0L;
+
+    public static Executor getSnapshotExecutor() {
+        return SNAPSHOT_EXECUTOR;
+    }
 
     public HistorySearcher(MainActivity activity, boolean isRefresh) {
         super(activity, null, isRefresh);
@@ -308,8 +315,8 @@ public class HistorySearcher extends Searcher {
                 }
             });
 
-            boolean ramHistorySort = PreferenceManager.getDefaultSharedPreferences(activity)
-                    .getBoolean("ram-history-sort", false);
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity);
+            boolean ramHistorySort = prefs.getBoolean("ram-history-sort", false);
             if (ramHistorySort) {
                 int historyCount = Math.min(5, result.tasks.size());
                 List<AppPojo> ramAlive = new ArrayList<>();
@@ -364,18 +371,39 @@ public class HistorySearcher extends Searcher {
             lastFetchUptimeMs = SystemClock.uptimeMillis();
 
             if (bridgeAvailable && !result.tasks.isEmpty()) {
-                int prefetchCount = Math.min(2, result.tasks.size());
-                for (int i = 0; i < prefetchCount; i++) {
-                    final int taskId = result.tasks.get(i).taskId;
-                    if (taskId > 0 && TaskSnapshotCache.get(taskId) == null) {
-                        Utilities.getDefaultExecutor().execute(() -> {
+                boolean clearDead = prefs.getBoolean("clear-dead-thumbnails", false);
+                boolean moreBanners = prefs.getBoolean("more-banners", false);
+                boolean moreBannersAll = moreBanners && prefs.getBoolean("more-banners-all", false);
+                int hiResLimit = Math.min(2, result.tasks.size());
+                for (int i = 0; i < hiResLimit; i++) {
+                    final AppPojo taskPojo = result.tasks.get(i);
+                    final int taskId = taskPojo.taskId;
+                    if (taskId > 0 && !(clearDead && taskPojo.rssKb <= 0L) && TaskSnapshotCache.get(taskId) == null) {
+                        SNAPSHOT_EXECUTOR.execute(() -> {
                             if (TaskSnapshotCache.get(taskId) == null) {
-                                Bitmap bmp = RecentsBridgeClient.getTaskSnapshot(taskId);
+                                Bitmap bmp = RecentsBridgeClient.getTaskSnapshot(taskId, 960, false);
                                 if (bmp != null) {
                                     TaskSnapshotCache.put(taskId, bmp);
                                 }
                             }
                         });
+                    }
+                }
+                if (moreBanners) {
+                    int thumbLimit = Math.min(moreBannersAll ? 12 : 4, result.tasks.size());
+                    for (int i = 0; i < thumbLimit; i++) {
+                        final AppPojo taskPojo = result.tasks.get(i);
+                        final int taskId = taskPojo.taskId;
+                        if (taskId > 0 && !(clearDead && taskPojo.rssKb <= 0L) && TaskSnapshotCache.getThumb(taskId) == null) {
+                            SNAPSHOT_EXECUTOR.execute(() -> {
+                                if (TaskSnapshotCache.getThumb(taskId) == null) {
+                                    Bitmap bmp = RecentsBridgeClient.getTaskSnapshot(taskId, 420, true);
+                                    if (bmp != null) {
+                                        TaskSnapshotCache.putThumb(taskId, bmp);
+                                    }
+                                }
+                            });
+                        }
                     }
                 }
             }

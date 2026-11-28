@@ -61,6 +61,8 @@ final class RecentsBridgeService extends Binder {
     private static final int MAX_SNAPSHOT_BINDER_BYTES = 480 * 1024;
     private static final int MAX_WALLPAPER_PX = 540;
 
+    private static final String KEY_NO_TRANSITION = "fr.neamar.kiss.NO_TRANSITION";
+
     private static final RecentsBridgeService INSTANCE = new RecentsBridgeService();
 
     private static volatile boolean reflectionInitialized = false;
@@ -77,6 +79,7 @@ final class RecentsBridgeService extends Binder {
     private static Method setTaskWindowingModeMethod;
     private static Method resizeTaskMethod;
     private static Method setLaunchWindowingModeMethod;
+    private static Method makeCustomTaskAnimationMethod;
     private static Method parceledListGetListMethod;
 
     private static Field realActivityField;
@@ -174,7 +177,9 @@ final class RecentsBridgeService extends Binder {
             case TX_GET_TASK_SNAPSHOT: {
                 data.enforceInterface(DESCRIPTOR);
                 int taskId = data.readInt();
-                byte[] jpeg = getTaskSnapshotBytes(taskId);
+                int maxDimPx = data.dataAvail() >= 4 ? data.readInt() : MAX_SNAPSHOT_PX;
+                boolean preferLowRes = data.dataAvail() >= 4 && data.readInt() != 0;
+                byte[] jpeg = getTaskSnapshotBytes(taskId, maxDimPx, preferLowRes);
                 reply.writeNoException();
                 reply.writeByteArray(jpeg);
                 return true;
@@ -241,6 +246,16 @@ final class RecentsBridgeService extends Binder {
                     resizeTaskMethod = findMethod(iatmClass, "resizeTask", int.class, Rect.class, int.class);
                 }
                 setLaunchWindowingModeMethod = findMethod(ActivityOptions.class, "setLaunchWindowingMode", int.class);
+                for (Method m : ActivityOptions.class.getMethods()) {
+                    if ("makeCustomTaskAnimation".equals(m.getName()) && m.getParameterCount() == 6) {
+                        Class<?>[] p = m.getParameterTypes();
+                        if (p[0] == Context.class && p[1] == int.class && p[2] == int.class) {
+                            m.setAccessible(true);
+                            makeCustomTaskAnimationMethod = m;
+                            break;
+                        }
+                    }
+                }
                 Class<?> sliceClass = Class.forName("android.content.pm.ParceledListSlice");
                 parceledListGetListMethod = sliceClass.getMethod("getList");
 
@@ -490,9 +505,13 @@ final class RecentsBridgeService extends Binder {
         if (activityTaskManager == null || startActivityFromRecentsMethod == null || taskId <= 0) {
             return false;
         }
+        Bundle effectiveOptions = options;
+        if (options != null && options.getBoolean(KEY_NO_TRANSITION, false)) {
+            effectiveOptions = buildNoTransitionBundle(options);
+        }
         long token = Binder.clearCallingIdentity();
         try {
-            Object res = startActivityFromRecentsMethod.invoke(activityTaskManager, taskId, options);
+            Object res = startActivityFromRecentsMethod.invoke(activityTaskManager, taskId, effectiveOptions);
             return !(res instanceof Integer) || (Integer) res >= 0;
         } catch (Throwable t) {
             HookLog.log("startActivityFromRecents(" + taskId + ") failed: " + t);
@@ -500,6 +519,33 @@ final class RecentsBridgeService extends Binder {
         } finally {
             Binder.restoreCallingIdentity(token);
         }
+    }
+
+    private static Bundle buildNoTransitionBundle(Bundle baseOptions) {
+        Bundle merged = new Bundle(baseOptions);
+        merged.remove(KEY_NO_TRANSITION);
+        Context ctx = resolveHostContext();
+        if (ctx == null) {
+            return merged;
+        }
+        try {
+            ActivityOptions ao = null;
+            if (makeCustomTaskAnimationMethod != null) {
+                Object res = makeCustomTaskAnimationMethod.invoke(null, ctx, 0, 0, null, null, null);
+                if (res instanceof ActivityOptions) {
+                    ao = (ActivityOptions) res;
+                }
+            }
+            if (ao == null) {
+                ao = ActivityOptions.makeCustomAnimation(ctx, 0, 0);
+            }
+            Bundle noAnim = ao.toBundle();
+            if (noAnim != null) {
+                merged.putAll(noAnim);
+            }
+        } catch (Throwable ignored) {
+        }
+        return merged;
     }
 
     private static boolean startTaskPopup(int taskId, Rect bounds, Bundle baseOptions) {
@@ -655,7 +701,7 @@ final class RecentsBridgeService extends Binder {
         return null;
     }
 
-    private static byte[] getTaskSnapshotBytes(int taskId) {
+    private static byte[] getTaskSnapshotBytes(int taskId, int maxDimPx, boolean preferLowRes) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || taskId <= 0) {
             return null;
         }
@@ -667,13 +713,22 @@ final class RecentsBridgeService extends Binder {
         long token = Binder.clearCallingIdentity();
         try {
             if (getTaskSnapshotMethod != null) {
-                if (getTaskSnapshotMethod.getParameterCount() == 3) {
-                    snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false, true);
-                } else {
-                    snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false);
+                if (preferLowRes) {
+                    if (getTaskSnapshotMethod.getParameterCount() == 3) {
+                        snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, true, false);
+                    } else {
+                        snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, true);
+                    }
+                }
+                if (snapshot == null) {
+                    if (getTaskSnapshotMethod.getParameterCount() == 3) {
+                        snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false, !preferLowRes);
+                    } else {
+                        snapshot = getTaskSnapshotMethod.invoke(activityTaskManager, taskId, false);
+                    }
                 }
             }
-            if ((snapshot == null || isLowResolutionSnapshot(snapshot)) && takeTaskSnapshotMethod != null) {
+            if (!preferLowRes && (snapshot == null || isLowResolutionSnapshot(snapshot)) && takeTaskSnapshotMethod != null) {
                 Object liveSnapshot;
                 if (takeTaskSnapshotMethod.getParameterCount() == 2) {
                     liveSnapshot = takeTaskSnapshotMethod.invoke(activityTaskManager, taskId, true);
@@ -693,6 +748,7 @@ final class RecentsBridgeService extends Binder {
             return null;
         }
 
+        int effectiveMaxPx = maxDimPx > 0 ? Math.min(MAX_SNAPSHOT_PX, maxDimPx) : MAX_SNAPSHOT_PX;
         HardwareBuffer hardwareBuffer = null;
         Bitmap hwBitmap = null;
         Bitmap swBitmap = null;
@@ -724,8 +780,8 @@ final class RecentsBridgeService extends Binder {
             Bitmap outBitmap = swBitmap;
             int w = swBitmap.getWidth();
             int h = swBitmap.getHeight();
-            if (w > MAX_SNAPSHOT_PX || h > MAX_SNAPSHOT_PX) {
-                float scale = Math.min((float) MAX_SNAPSHOT_PX / w, (float) MAX_SNAPSHOT_PX / h);
+            if (w > effectiveMaxPx || h > effectiveMaxPx) {
+                float scale = Math.min((float) effectiveMaxPx / w, (float) effectiveMaxPx / h);
                 scaledBitmap = Bitmap.createScaledBitmap(
                         swBitmap,
                         Math.max(1, Math.round(w * scale)),
@@ -733,11 +789,12 @@ final class RecentsBridgeService extends Binder {
                         true);
                 outBitmap = scaledBitmap;
             }
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(64 * 1024);
-            outBitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(preferLowRes ? 24 * 1024 : 48 * 1024);
+            int jpegQuality = preferLowRes ? 76 : 84;
+            outBitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, baos);
             if (baos.size() > MAX_SNAPSHOT_BINDER_BYTES) {
                 baos.reset();
-                outBitmap.compress(Bitmap.CompressFormat.JPEG, 78, baos);
+                outBitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos);
             }
             return baos.toByteArray();
         } catch (Throwable t) {

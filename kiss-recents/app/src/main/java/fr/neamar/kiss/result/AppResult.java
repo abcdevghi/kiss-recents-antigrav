@@ -83,6 +83,49 @@ public class AppResult extends ResultWithTags<AppPojo> {
     ));
     private volatile Drawable icon = null;
 
+    public static final class BannerViewHolder {
+        public final ImageView snapshotView;
+        public final ImageView fallbackIconView;
+        public final View scrimView;
+        @Nullable
+        public final ImageView headerIconView;
+        public final TextView appNameView;
+        public final TextView metaView;
+        @Nullable
+        public final View outlineView;
+
+        public String boundPojoId;
+        @Nullable
+        public Bitmap boundSnapshot;
+        public boolean boundGreyscale;
+        public boolean boundLightweight;
+        public long boundRssKb;
+        public boolean boundShowRam;
+        public boolean boundKept;
+        public boolean boundValid;
+
+        BannerViewHolder(@NonNull View root, boolean isFocusedBanner) {
+            snapshotView = root.findViewById(R.id.banner_snapshot);
+            fallbackIconView = root.findViewById(R.id.banner_fallback_icon);
+            scrimView = root.findViewById(R.id.banner_scrim);
+            headerIconView = root.findViewById(isFocusedBanner ? R.id.banner_icon : R.id.unfocused_banner_icon);
+            appNameView = root.findViewById(R.id.banner_app_name);
+            metaView = root.findViewById(R.id.banner_app_meta);
+            outlineView = isFocusedBanner ? root.findViewById(R.id.banner_outline) : null;
+        }
+    }
+
+    @NonNull
+    public static BannerViewHolder obtainBannerHolder(@NonNull View root, boolean isFocusedBanner) {
+        Object tag = root.getTag(R.id.banner_header);
+        if (tag instanceof BannerViewHolder) {
+            return (BannerViewHolder) tag;
+        }
+        BannerViewHolder holder = new BannerViewHolder(root, isFocusedBanner);
+        root.setTag(R.id.banner_header, holder);
+        return holder;
+    }
+
     public String getPackageName() {
         return pojo.packageName;
     }
@@ -206,11 +249,17 @@ public class AppResult extends ResultWithTags<AppPojo> {
      */
     public void displayBanner(@NonNull Context context, @NonNull View bannerView,
                               @Nullable Bitmap snapshot, boolean greyscale) {
-        displayBanner(context, bannerView, snapshot, greyscale, false);
+        displayBanner(context, bannerView, snapshot, greyscale, false, false, false);
     }
 
     public void displayBanner(@NonNull Context context, @NonNull View bannerView,
                               @Nullable Bitmap snapshot, boolean greyscale, boolean skipHeavyVisuals) {
+        displayBanner(context, bannerView, snapshot, greyscale, skipHeavyVisuals, false, false);
+    }
+
+    public void displayBanner(@NonNull Context context, @NonNull View bannerView,
+                              @Nullable Bitmap snapshot, boolean greyscale, boolean skipHeavyVisuals,
+                              boolean showIcon, boolean noOutline) {
         final float cornerRadius = context.getResources().getDimension(R.dimen.banner_card_corner_radius);
         final int strokeWidthPx = Math.max(2, DrawableUtils.dpToPx(context, 2.5f));
         if (!(bannerView.getTag(R.id.banner_outline) instanceof Boolean)) {
@@ -226,34 +275,46 @@ public class AppResult extends ResultWithTags<AppPojo> {
             bannerView.setElevation(DrawableUtils.dpToPx(context, 6f));
             bannerView.setTag(R.id.banner_outline, Boolean.TRUE);
         }
+        BannerViewHolder holder = obtainBannerHolder(bannerView, true);
         bannerView.setTag(BANNER_TAG_KEY, pojo.id);
         bannerView.setTag(R.id.banner_scrim, null);
         bannerView.setTag(R.id.banner_app_name, null);
         bannerView.invalidateOutline();
 
-        TextView appName = bannerView.findViewById(R.id.banner_app_name);
-        appName.setText(pojo.getName());
-        appName.setAlpha(1f);
+        holder.appNameView.setText(pojo.getName());
+        holder.appNameView.setAlpha(1f);
 
-        TextView metaView = bannerView.findViewById(R.id.banner_app_meta);
-        bindBannerMeta(context, metaView);
-        metaView.setAlpha(1f);
+        bindBannerMeta(context, holder.metaView);
+        holder.metaView.setAlpha(1f);
 
-        View scrimView = bannerView.findViewById(R.id.banner_scrim);
-        if (scrimView != null) {
-            scrimView.setAlpha(1f);
+        if (holder.scrimView != null) {
+            holder.scrimView.setAlpha(1f);
         }
 
-        final ImageView snapshotView = bannerView.findViewById(R.id.banner_snapshot);
-        final ImageView fallbackIconView = bannerView.findViewById(R.id.banner_fallback_icon);
-        final View outlineView = bannerView.findViewById(R.id.banner_outline);
+        if (holder.headerIconView != null) {
+            holder.headerIconView.setAlpha(1f);
+            if (showIcon && !isHideIcons(context)) {
+                holder.headerIconView.setVisibility(View.VISIBLE);
+                setAsyncDrawable(holder.headerIconView);
+            } else {
+                holder.headerIconView.setImageDrawable(null);
+                holder.headerIconView.setVisibility(View.GONE);
+            }
+        }
+
+        final View outlineView = holder.outlineView;
         if (outlineView != null) {
             outlineView.setAlpha(1f);
+            outlineView.setVisibility(noOutline ? View.GONE : View.VISIBLE);
         }
 
+        final ImageView snapshotView = holder.snapshotView;
+        final ImageView fallbackIconView = holder.fallbackIconView;
         final boolean hasSnapshot = snapshot != null && !snapshot.isRecycled();
         if (hasSnapshot) {
-            snapshotView.setImageBitmap(snapshot);
+            if (holder.boundSnapshot != snapshot || snapshotView.getVisibility() != View.VISIBLE) {
+                snapshotView.setImageBitmap(snapshot);
+            }
             snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 int maxDim = Math.max(snapshot.getWidth(), snapshot.getHeight());
@@ -288,9 +349,9 @@ public class AppResult extends ResultWithTags<AppPojo> {
         }
 
         int dominant = getDominantColor(context);
-        applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, dominant, hasSnapshot);
+        applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, dominant, hasSnapshot, noOutline);
 
-        if (!skipHeavyVisuals && pojo.dominantColor == 0) {
+        if (!skipHeavyVisuals && pojo.dominantColor == 0 && (!noOutline || !hasSnapshot)) {
             final String expectedId = pojo.id;
             Utilities.<Integer>runAsync(task -> {
                 if (task.isCancelled()) {
@@ -305,10 +366,17 @@ public class AppResult extends ResultWithTags<AppPojo> {
                     return;
                 }
                 if (expectedId.equals(bannerView.getTag(BANNER_TAG_KEY))) {
-                    applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx, colorObj.intValue(), hasSnapshot);
+                    applyBannerChrome(bannerView, outlineView, cornerRadius, strokeWidthPx,
+                            colorObj.intValue(), hasSnapshot, noOutline);
                 }
             });
         }
+
+        holder.boundPojoId = pojo.id;
+        holder.boundSnapshot = hasSnapshot ? snapshot : null;
+        holder.boundGreyscale = greyscale;
+        holder.boundLightweight = skipHeavyVisuals;
+        holder.boundValid = true;
     }
 
     /**
@@ -326,64 +394,73 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 }
             });
             bannerView.setClipToOutline(true);
-            bannerView.setElevation(DrawableUtils.dpToPx(context, 3f));
+            bannerView.setElevation(0f);
             bannerView.setTag(R.id.banner_scrim, Boolean.TRUE);
         }
+
+        BannerViewHolder holder = obtainBannerHolder(bannerView, false);
+        final Bitmap resolvedSnapshot = (snapshot != null && !snapshot.isRecycled()) ? snapshot : null;
+        final boolean hasSnapshot = resolvedSnapshot != null;
+        final boolean showRam = isShowEntryRam(context);
+        final boolean kept = KeepAlive.isKept(context, pojo.packageName);
+        if (holder.boundValid
+                && pojo.id.equals(holder.boundPojoId)
+                && holder.boundSnapshot == resolvedSnapshot
+                && holder.boundGreyscale == greyscale
+                && holder.boundLightweight == skipHeavyVisuals
+                && holder.boundShowRam == showRam
+                && holder.boundKept == kept
+                && (!showRam || holder.boundRssKb == pojo.rssKb)) {
+            return;
+        }
+
         bannerView.setTag(BANNER_TAG_KEY, pojo.id);
 
-        TextView appName = bannerView.findViewById(R.id.banner_app_name);
-        appName.setText(pojo.getName());
+        holder.appNameView.setText(pojo.getName());
+        bindBannerMeta(context, holder.metaView);
 
-        TextView metaView = bannerView.findViewById(R.id.banner_app_meta);
-        bindBannerMeta(context, metaView);
-
-        ImageView headerIconView = bannerView.findViewById(R.id.unfocused_banner_icon);
-        if (headerIconView != null) {
+        if (holder.headerIconView != null) {
             if (!isHideIcons(context)) {
-                setAsyncDrawable(headerIconView);
+                holder.headerIconView.setVisibility(View.VISIBLE);
+                setAsyncDrawable(holder.headerIconView);
             } else {
-                headerIconView.setImageDrawable(null);
+                holder.headerIconView.setImageDrawable(null);
+                holder.headerIconView.setVisibility(View.GONE);
             }
         }
 
-        final ImageView snapshotView = bannerView.findViewById(R.id.banner_snapshot);
-        final ImageView fallbackIconView = bannerView.findViewById(R.id.banner_fallback_icon);
+        final ImageView snapshotView = holder.snapshotView;
+        final ImageView fallbackIconView = holder.fallbackIconView;
 
-        final boolean hasSnapshot = snapshot != null && !snapshot.isRecycled();
         if (hasSnapshot) {
-            snapshotView.setImageBitmap(snapshot);
-            snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                int maxDim = Math.max(snapshot.getWidth(), snapshot.getHeight());
-                if (maxDim < 1080) {
-                    float blurDp = maxDim < 720 ? 3.2f : 2.0f;
-                    float blurPx = Math.max(2f, blurDp * context.getResources().getDisplayMetrics().density);
-                    snapshotView.setRenderEffect(RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP));
-                } else {
-                    snapshotView.setRenderEffect(null);
-                }
+            if (holder.boundSnapshot != resolvedSnapshot || snapshotView.getVisibility() != View.VISIBLE) {
+                snapshotView.setImageBitmap(resolvedSnapshot);
             }
+            snapshotView.setColorFilter(greyscale ? GREYSCALE_COLOR_FILTER : null);
             snapshotView.setVisibility(View.VISIBLE);
             fallbackIconView.setVisibility(View.GONE);
         } else {
             snapshotView.setImageDrawable(null);
             snapshotView.setColorFilter(null);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                snapshotView.setRenderEffect(null);
-            }
             snapshotView.setVisibility(View.GONE);
-            fallbackIconView.setImageDrawable(null);
-            fallbackIconView.setVisibility(View.GONE);
+            if (!skipHeavyVisuals && !isHideIcons(context)) {
+                fallbackIconView.setAlpha(0.28f);
+                fallbackIconView.setVisibility(View.VISIBLE);
+                setAsyncDrawable(fallbackIconView);
+            } else {
+                fallbackIconView.setImageDrawable(null);
+                fallbackIconView.setVisibility(View.GONE);
+            }
         }
 
-        int dominant = getDominantColor(context);
         if (!hasSnapshot) {
+            int dominant = getDominantColor(context);
             bannerView.setBackgroundColor(ColorUtils.blendARGB(0xFF161920, dominant, 0.20f));
         } else {
             bannerView.setBackgroundColor(0xFF181B22);
         }
 
-        if (!skipHeavyVisuals && pojo.dominantColor == 0) {
+        if (!hasSnapshot && !skipHeavyVisuals && pojo.dominantColor == 0) {
             final String expectedId = pojo.id;
             Utilities.<Integer>runAsync(task -> {
                 if (task.isCancelled()) {
@@ -397,11 +474,20 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 if (task.isCancelled() || colorObj == null) {
                     return;
                 }
-                if (!hasSnapshot && expectedId.equals(bannerView.getTag(BANNER_TAG_KEY))) {
+                if (expectedId.equals(bannerView.getTag(BANNER_TAG_KEY))) {
                     bannerView.setBackgroundColor(ColorUtils.blendARGB(0xFF161920, colorObj.intValue(), 0.20f));
                 }
             });
         }
+
+        holder.boundPojoId = pojo.id;
+        holder.boundSnapshot = resolvedSnapshot;
+        holder.boundGreyscale = greyscale;
+        holder.boundLightweight = skipHeavyVisuals;
+        holder.boundRssKb = pojo.rssKb;
+        holder.boundShowRam = showRam;
+        holder.boundKept = kept;
+        holder.boundValid = true;
     }
 
     private void bindBannerMeta(@NonNull Context context, @NonNull TextView metaView) {
@@ -422,12 +508,16 @@ public class AppResult extends ResultWithTags<AppPojo> {
         }
     }
 
-    private static void applyBannerChrome(View bannerView, View outlineView, float cornerRadius,
-                                          int strokeWidthPx, @ColorInt int dominantColor, boolean hasSnapshot) {
+    private static void applyBannerChrome(View bannerView, @Nullable View outlineView, float cornerRadius,
+                                          int strokeWidthPx, @ColorInt int dominantColor, boolean hasSnapshot,
+                                          boolean noOutline) {
         if (!hasSnapshot) {
             bannerView.setBackgroundColor(ColorUtils.blendARGB(0xFF161920, dominantColor, 0.22f));
         } else {
             bannerView.setBackgroundColor(0xFF181B22);
+        }
+        if (noOutline || outlineView == null) {
+            return;
         }
         GradientDrawable border;
         if (outlineView.getBackground() instanceof GradientDrawable) {
@@ -598,7 +688,12 @@ public class AppResult extends ResultWithTags<AppPojo> {
     @Nullable
     private Bundle createLaunchAnimationBundle(@Nullable View v) {
         if (v != null && Boolean.TRUE.equals(v.getTag(R.id.banner_scrim))) {
-            return ActivityOptions.makeCustomAnimation(v.getContext(), 0, 0).toBundle();
+            Bundle opts = ActivityOptions.makeCustomAnimation(v.getContext(), 0, 0).toBundle();
+            if (opts == null) {
+                opts = new Bundle();
+            }
+            opts.putBoolean(RecentsBridgeClient.KEY_NO_TRANSITION, true);
+            return opts;
         }
         View target = resolveLaunchAnimTarget(v);
         if (target == null) {
@@ -704,7 +799,8 @@ public class AppResult extends ResultWithTags<AppPojo> {
                 HistorySearcher.clearDismissedTask(pojo.taskId);
             }
 
-            View animTarget = resolveLaunchAnimTarget(v);
+            boolean noTransition = v != null && Boolean.TRUE.equals(v.getTag(R.id.banner_scrim));
+            View animTarget = noTransition ? null : resolveLaunchAnimTarget(v);
             Rect sourceBounds = animTarget != null ? getViewBounds(animTarget) : null;
             Bundle opts = createLaunchAnimationBundle(v);
 
@@ -733,6 +829,9 @@ public class AppResult extends ResultWithTags<AppPojo> {
             Intent componentIntent = new Intent(Intent.ACTION_MAIN);
             componentIntent.setComponent(getClassName());
             componentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            if (noTransition) {
+                componentIntent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            }
             if (sourceBounds != null) {
                 componentIntent.setSourceBounds(sourceBounds);
             }
@@ -746,6 +845,9 @@ public class AppResult extends ResultWithTags<AppPojo> {
             Intent pkgIntent = context.getPackageManager().getLaunchIntentForPackage(pojo.packageName);
             if (pkgIntent != null) {
                 pkgIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (noTransition) {
+                    pkgIntent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                }
                 if (sourceBounds != null) {
                     pkgIntent.setSourceBounds(sourceBounds);
                 }

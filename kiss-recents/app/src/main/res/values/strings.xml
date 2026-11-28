@@ -440,5 +440,16 @@
     <string name="ram_history_sort_summary">Keep the 5 most recent tasks as history, sort active apps by RAM nearest history, and place 0 MB tasks on the opposite side</string>
     <string name="clear_all_keep_history_title">Keep top 5 history on Clear all</string>
     <string name="clear_all_keep_history_summary">Clear all only closes apps outside the 5 most recent history tasks</string>
+    <string name="selected_banner_icon_title">Show icon on selected app</string>
+    <string name="selected_banner_icon_summary">Display the app icon next to the title on the expanded preview card</string>
+    <string name="selected_banner_no_outline_title">Hide selected outline</string>
+    <string name="selected_banner_no_outline_summary">Remove the colored border around the expanded preview card</string>
+    <string name="thumbnail_parallax_title">Thumbnail parallax</string>
+    <string name="thumbnail_parallax_summary">Shift preview thumbnails and placeholder icons smoothly while scrolling</string>
+    <string name="clear_dead_thumbnails_title">Clear thumbnails for 0 B apps</string>
+    <string name="clear_dead_thumbnails_summary">Hide preview screenshots and show the app icon when an app uses 0 B RAM</string>
+    <string name="section_label_ram">RAM</string>
+    <string name="section_label_history">HISTORY</string>
+    <string name="section_label_dead">DEAD</string>
     <string name="total_ram_format">%1$s / %2$s</string>
 </resources>
