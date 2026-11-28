@@ -6,7 +6,13 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.os.SystemClock;
 import android.util.AttributeSet;
@@ -74,13 +80,17 @@ public class RecentsCarouselView extends FrameLayout {
 
         default void onUserInteracted() {
         }
+
+        default void onOpenSesameProgress(float progress) {
+        }
     }
 
     private enum DragMode {
         NONE,
         SCROLL_VERTICAL,
         SWIPE_CONTEXT,
-        SWIPE_DISMISS
+        SWIPE_DISMISS,
+        SCROLLBAR_DRAG
     }
 
     private static final float GRAB_SCALE = 0.90f;
@@ -115,7 +125,9 @@ public class RecentsCarouselView extends FrameLayout {
     private final int maxFlingVelocity;
     private final int longPressTimeoutMs;
     private final int unfocusedHeightPx;
+    private final int unfocusedBannerHeightPx;
     private final int bannerHeightPx;
+    private final float bannerCornerRadiusPx;
     private final int itemGapPx;
     private final int horizontalMarginPx;
     private final int bannerHorizontalMarginPx;
@@ -123,15 +135,27 @@ public class RecentsCarouselView extends FrameLayout {
     private final int contextMenuButtonSizePx;
     private final int contextMenuStepPx;
     private final int maxScrollSwayPx;
+    private final int scrollbarHitWidthPx;
+    private final int scrollbarPaddingVPx;
+    private final float scrollbarOffsetXPx;
+    private final float scrollbarIdleWidthPx;
+    private final float scrollbarActiveWidthPx;
+    private final float scrollbarMinThumbPx;
 
     private final OverScroller scrollScroller;
     private final SparseArray<View> boundUnfocusedViews = new SparseArray<>();
     private final List<View> recycledUnfocusedViews = new ArrayList<>();
+    private final List<View> recycledUnfocusedBannerViews = new ArrayList<>();
     private final Set<Integer> inFlightSnapshots = new HashSet<>();
+    private final Paint scrollbarTrackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint scrollbarThumbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF scrollbarTrackRect = new RectF();
+    private final RectF scrollbarThumbRect = new RectF();
 
     private View bannerView;
     private ImageView bannerSnapshotView;
     private final Matrix bannerParallaxMatrix = new Matrix();
+    private final Matrix unfocusedParallaxMatrix = new Matrix();
     private float lastBannerParallaxDy = 0f;
     private float lastBannerParallaxTx = 0f;
     private ContextMenuOverlay contextMenuLayer;
@@ -146,6 +170,12 @@ public class RecentsCarouselView extends FrameLayout {
     private RecordAdapter adapter;
     private Callback callback;
     private boolean greyscaleSnapshots = true;
+    private boolean focusCurrentApp = false;
+    private boolean reverseOrder = false;
+    private boolean moreBanners = false;
+    private boolean moreBannersAll = false;
+    private boolean showScrollbar = false;
+    private boolean openSesame = false;
 
     private int selectedAdapterPos = -1;
     private int bannerBoundAdapterPos = -1;
@@ -173,6 +203,19 @@ public class RecentsCarouselView extends FrameLayout {
     private ValueAnimator swayAnimator;
     private ValueAnimator dismissAnimator;
     private ValueAnimator shrinkAnimator;
+    private ValueAnimator scrollbarAnimator;
+    private ValueAnimator openSesameAnimator;
+
+    private float scrollbarEngagement = 0f;
+    private boolean scrollbarEngaged = false;
+    private boolean openSesameActive = false;
+    private float openSesameProgress = 0f;
+    private float sesameStartLeft = 0f;
+    private float sesameStartTop = 0f;
+    private float sesameStartWidth = 0f;
+    private float sesameStartHeight = 0f;
+    private float sesameTargetHeight = 0f;
+    private final ColorMatrix sesameSatMatrix = new ColorMatrix();
 
     private DragMode dragMode = DragMode.NONE;
     private float downX;
@@ -423,7 +466,9 @@ public class RecentsCarouselView extends FrameLayout {
         longPressTimeoutMs = ViewConfiguration.getLongPressTimeout();
 
         unfocusedHeightPx = resolveUnfocusedRowHeight(context);
+        unfocusedBannerHeightPx = getResources().getDimensionPixelSize(R.dimen.unfocused_banner_card_height);
         bannerHeightPx = getResources().getDimensionPixelSize(R.dimen.banner_card_height);
+        bannerCornerRadiusPx = getResources().getDimension(R.dimen.banner_card_corner_radius);
         itemGapPx = DrawableUtils.dpToPx(context, 6f);
         horizontalMarginPx = DrawableUtils.dpToPx(context, 22f);
         bannerHorizontalMarginPx = DrawableUtils.dpToPx(context, 32f);
@@ -431,6 +476,17 @@ public class RecentsCarouselView extends FrameLayout {
         contextMenuButtonSizePx = DrawableUtils.dpToPx(context, 44f);
         contextMenuStepPx = DrawableUtils.dpToPx(context, 52f);
         maxScrollSwayPx = DrawableUtils.dpToPx(context, 14f);
+        scrollbarHitWidthPx = DrawableUtils.dpToPx(context, 24f);
+        scrollbarPaddingVPx = DrawableUtils.dpToPx(context, 18f);
+        scrollbarOffsetXPx = DrawableUtils.dpToPx(context, 7f);
+        scrollbarIdleWidthPx = DrawableUtils.dpToPx(context, 4f);
+        scrollbarActiveWidthPx = DrawableUtils.dpToPx(context, 6.5f);
+        scrollbarMinThumbPx = DrawableUtils.dpToPx(context, 36f);
+
+        scrollbarTrackPaint.setStyle(Paint.Style.FILL);
+        scrollbarTrackPaint.setColor(0x28FFFFFF);
+        scrollbarThumbPaint.setStyle(Paint.Style.FILL);
+        scrollbarThumbPaint.setColor(0xFFFFFFFF);
 
         scrollScroller = new OverScroller(context, DECELERATE);
         scrollScroller.setFriction(ViewConfiguration.getScrollFriction() * 1.75f);
@@ -541,6 +597,68 @@ public class RecentsCarouselView extends FrameLayout {
         this.transparentViewport = transparentViewport;
     }
 
+    public void setFocusCurrentApp(boolean focusCurrentApp) {
+        this.focusCurrentApp = focusCurrentApp;
+    }
+
+    public void setReverseOrder(boolean reverseOrder) {
+        if (this.reverseOrder != reverseOrder) {
+            this.reverseOrder = reverseOrder;
+            int count = getItemCount();
+            if (count > 0 && selectedAdapterPos >= 0) {
+                scrollItemPos = adapterToVisualPos(selectedAdapterPos);
+                rawScrollItemPos = unmapScrollPos(scrollItemPos, Math.max(0, count - 1));
+                clearAllItemViews();
+                layoutCarousel();
+            }
+        }
+    }
+
+    public void setMoreBanners(boolean enabled, boolean applyToAll) {
+        boolean all = enabled && applyToAll;
+        if (this.moreBanners != enabled || this.moreBannersAll != all) {
+            this.moreBanners = enabled;
+            this.moreBannersAll = all;
+            clearAllItemViews();
+            if (getItemCount() > 0) {
+                layoutCarousel();
+                requestSnapshotsAroundSelection(true);
+            }
+        }
+    }
+
+    public void setShowScrollbar(boolean showScrollbar) {
+        if (this.showScrollbar != showScrollbar) {
+            this.showScrollbar = showScrollbar;
+            invalidate();
+        }
+    }
+
+    public void setOpenSesame(boolean openSesame) {
+        this.openSesame = openSesame;
+    }
+
+    public void resetOpenSesame() {
+        cancelAnimator(openSesameAnimator);
+        boolean wasActive = openSesameActive;
+        openSesameActive = false;
+        openSesameProgress = 0f;
+        if (bannerView != null) {
+            bannerView.setTag(R.id.banner_scrim, null);
+            bannerView.setTag(R.id.banner_app_name, null);
+            bannerView.invalidateOutline();
+        }
+        if (wasActive) {
+            if (callback != null) {
+                callback.onOpenSesameProgress(0f);
+            }
+            if (getItemCount() > 0 && selectedAdapterPos >= 0) {
+                rebindBanner();
+                layoutCarousel();
+            }
+        }
+    }
+
     public boolean isContextMenuOpen() {
         return contextMenuProgress > 0.05f;
     }
@@ -552,7 +670,7 @@ public class RecentsCarouselView extends FrameLayout {
     }
 
     public boolean isAnimating() {
-        return animatingClearAll || animatingSingleDismiss || reflowProgress < 1f;
+        return animatingClearAll || animatingSingleDismiss || reflowProgress < 1f || openSesameActive;
     }
 
     public void resetSelection() {
@@ -574,6 +692,10 @@ public class RecentsCarouselView extends FrameLayout {
         overshootBrakingActive = false;
         springSnapActive = false;
         springVelocityItemsPerSec = 0f;
+        scrollbarEngaged = false;
+        scrollbarEngagement = 0f;
+        openSesameActive = false;
+        openSesameProgress = 0f;
         grabScale = 1f;
         grabbed = false;
         grabbedVisualIndex = -1;
@@ -594,6 +716,8 @@ public class RecentsCarouselView extends FrameLayout {
         cancelAnimator(dismissAnimator);
         cancelAnimator(shrinkAnimator);
         cancelAnimator(reflowAnimator);
+        cancelAnimator(scrollbarAnimator);
+        cancelAnimator(openSesameAnimator);
         horizontalSwipePx = 0f;
         contextMenuProgress = 0f;
         scrollSwayPx = 0f;
@@ -602,6 +726,9 @@ public class RecentsCarouselView extends FrameLayout {
         contextMenuLayer.setVisibility(View.GONE);
         clearAllItemViews();
         if (bannerView != null) {
+            bannerView.setTag(R.id.banner_scrim, null);
+            bannerView.setTag(R.id.banner_app_name, null);
+            bannerView.invalidateOutline();
             bannerView.setVisibility(View.GONE);
         }
         invalidateViewport();
@@ -647,12 +774,13 @@ public class RecentsCarouselView extends FrameLayout {
             }
         }
         if (resolvedPos < 0) {
-            resolvedPos = Math.max(0, count - 2);
+            resolvedPos = resolveDefaultAdapterPos(count);
             selectedPojoId = adapter.getItem(resolvedPos).getPojoId();
-            scrollItemPos = resolvedPos;
+            scrollItemPos = adapterToVisualPos(resolvedPos);
         } else {
+            int resolvedVisual = adapterToVisualPos(resolvedPos);
             if (dragMode == DragMode.NONE && !overshootBrakingActive && !springSnapActive && scrollScroller.isFinished()) {
-                scrollItemPos = clamp(resolvedPos, 0f, count - 1);
+                scrollItemPos = clamp(resolvedVisual, 0f, count - 1);
             } else {
                 scrollItemPos = clamp(scrollItemPos, 0f, count - 1);
             }
@@ -673,15 +801,52 @@ public class RecentsCarouselView extends FrameLayout {
         requestSnapshotsAroundSelection(true);
     }
 
+    private int resolveDefaultAdapterPos(int count) {
+        int currentPos = -1;
+        int previousPos = -1;
+        for (int i = 0; i < count; i++) {
+            Object pojo = adapter.getItem(i).getPojo();
+            if (pojo instanceof AppPojo) {
+                int rank = ((AppPojo) pojo).recentTaskRank;
+                if (rank == 0 && currentPos < 0) {
+                    currentPos = i;
+                } else if (rank == 1 && previousPos < 0) {
+                    previousPos = i;
+                }
+            }
+        }
+        if (focusCurrentApp) {
+            return currentPos >= 0 ? currentPos : Math.max(0, count - 1);
+        }
+        if (previousPos >= 0) {
+            return previousPos;
+        }
+        if (currentPos >= 0) {
+            return currentPos;
+        }
+        return Math.max(0, count - 2);
+    }
+
     public void refreshAllBoundItems() {
         rebindBanner();
+        int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
         for (int i = 0; i < boundUnfocusedViews.size(); i++) {
             int visualIdx = boundUnfocusedViews.keyAt(i);
             View v = boundUnfocusedViews.valueAt(i);
             int adapterPos = visualToAdapterPos(visualIdx);
             if (adapterPos >= 0 && adapterPos < getItemCount()) {
-                adapter.getItem(adapterPos).display(getContext(), v, this, null);
+                Result<?> item = adapter.getItem(adapterPos);
+                if (isUnfocusedBannerView(v) && item instanceof AppResult) {
+                    AppResult appResult = (AppResult) item;
+                    Bitmap cachedSnapshot = TaskSnapshotCache.get(appResult.getPojo().taskId);
+                    appResult.displayUnfocusedBanner(getContext(), v, cachedSnapshot, greyscaleSnapshots, thumbnailsSuppressed);
+                } else {
+                    item.display(getContext(), v, this, null);
+                }
             }
+        }
+        if (selectedVisualIdx >= 0 && bannerView != null) {
+            applyBannerThumbnailParallax(lastBannerParallaxDy, lastBannerParallaxTx);
         }
     }
 
@@ -797,13 +962,15 @@ public class RecentsCarouselView extends FrameLayout {
         cancelAnimator(dismissAnimator);
         cancelAnimator(shrinkAnimator);
         cancelAnimator(reflowAnimator);
+        cancelAnimator(scrollbarAnimator);
+        cancelAnimator(openSesameAnimator);
         inFlightSnapshots.clear();
         recycleVelocityTracker();
     }
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
-        if (animatingClearAll || animatingSingleDismiss || getItemCount() == 0) {
+        if (animatingClearAll || animatingSingleDismiss || openSesameActive || getItemCount() == 0) {
             return true;
         }
         if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
@@ -817,7 +984,7 @@ public class RecentsCarouselView extends FrameLayout {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (animatingClearAll || animatingSingleDismiss || getItemCount() == 0) {
+        if (animatingClearAll || animatingSingleDismiss || openSesameActive || getItemCount() == 0) {
             return false;
         }
 
@@ -886,6 +1053,15 @@ public class RecentsCarouselView extends FrameLayout {
         velocityTracker.addMovement(event);
 
         downVisualIndex = hitTestVisualIndex(downX, downY);
+        if (showScrollbar && getItemCount() > 1 && downX <= scrollbarHitWidthPx && !isContextMenuOpen()) {
+            dragMode = DragMode.SCROLLBAR_DRAG;
+            if (callback != null) {
+                callback.onUserInteracted();
+            }
+            setScrollbarEngaged(true);
+            scrubToScrollbarY(downY, false);
+            return;
+        }
         if (!isContextMenuOpen() && downVisualIndex >= 0) {
             setGrabbedVisual(downVisualIndex, true);
             postDelayed(longPressRunnable, longPressTimeoutMs);
@@ -898,6 +1074,11 @@ public class RecentsCarouselView extends FrameLayout {
         }
         float x = event.getX();
         float y = event.getY();
+        if (dragMode == DragMode.SCROLLBAR_DRAG) {
+            scrubToScrollbarY(y, true);
+            lastY = y;
+            return;
+        }
         float dx = x - downX;
         float dy = y - downY;
 
@@ -913,6 +1094,7 @@ public class RecentsCarouselView extends FrameLayout {
                     animateHorizontalTo(0f);
                 }
                 dragMode = DragMode.SCROLL_VERTICAL;
+                setScrollbarEngaged(true);
                 if (callback != null) {
                     callback.onUserInteracted();
                 }
@@ -953,7 +1135,7 @@ public class RecentsCarouselView extends FrameLayout {
 
         if (dragMode == DragMode.SCROLL_VERTICAL) {
             float stepDy = y - lastY;
-            float pxPerItem = unfocusedHeightPx + itemGapPx;
+            float pxPerItem = getSlotStepPx();
             float deltaItems = -stepDy / Math.max(1f, pxPerItem);
             int maxIdx = Math.max(0, getItemCount() - 1);
             float oldPos = scrollItemPos;
@@ -1006,19 +1188,30 @@ public class RecentsCarouselView extends FrameLayout {
             vy = velocityTracker.getYVelocity();
         }
 
-        if (dragMode == DragMode.NONE) {
+        if (dragMode == DragMode.SCROLLBAR_DRAG) {
+            setScrollbarEngaged(false);
+            snapScrollToNearest(true);
+            releaseScrollSway();
+        } else if (dragMode == DragMode.NONE) {
             if (isContextMenuOpen()) {
                 animateHorizontalTo(0f);
             } else if (downVisualIndex >= 0) {
                 int tappedAdapterPos = visualToAdapterPos(downVisualIndex);
                 if (tappedAdapterPos >= 0 && tappedAdapterPos < getItemCount()) {
-                    if (tappedAdapterPos == selectedAdapterPos) {
-                        snapScrollToNearest(false);
+                    View tappedView = (tappedAdapterPos == selectedAdapterPos)
+                            ? bannerView
+                            : boundUnfocusedViews.get(downVisualIndex);
+                    if (openSesame) {
+                        startOpenSesameLaunch(adapter.getItem(tappedAdapterPos), tappedAdapterPos, tappedView);
                     } else {
-                        selectAdapterPosition(tappedAdapterPos, true);
-                    }
-                    if (callback != null) {
-                        callback.onLaunchSelected(adapter.getItem(tappedAdapterPos), bannerView);
+                        if (tappedAdapterPos == selectedAdapterPos) {
+                            snapScrollToNearest(false);
+                        } else {
+                            selectAdapterPosition(tappedAdapterPos, true);
+                        }
+                        if (callback != null) {
+                            callback.onLaunchSelected(adapter.getItem(tappedAdapterPos), tappedView != null ? tappedView : bannerView);
+                        }
                     }
                 }
             } else {
@@ -1033,7 +1226,7 @@ public class RecentsCarouselView extends FrameLayout {
                 snapScrollTo(clamp(scrollItemPos, 0f, maxIdx), true, true);
                 releaseScrollSway();
             } else if (Math.abs(vy) >= minFlingVelocity) {
-                float pxPerItem = unfocusedHeightPx + itemGapPx;
+                float pxPerItem = getSlotStepPx();
                 int startMilli = Math.round(scrollItemPos * 1000f);
                 int velMilli = Math.round((-vy / Math.max(1f, pxPerItem)) * 900f);
                 scrollScroller.fling(0, startMilli, 0, velMilli, 0, 0, -100000, maxIdx * 1000 + 100000, 0, 0);
@@ -1077,7 +1270,7 @@ public class RecentsCarouselView extends FrameLayout {
                 int target = (nearest - scrollItemPos) * dir <= 0.18f
                         ? (int) clamp(nearest + dir, 0f, maxIdx)
                         : nearest;
-                float pxPerItem = Math.max(1f, unfocusedHeightPx + itemGapPx);
+                float pxPerItem = getSlotStepPx();
                 float kickDir = (target >= scrollItemPos ? 1f : -1f);
                 float startVel = kickDir * clamp(Math.abs(vy / pxPerItem) * 0.70f, 1.5f, 5.2f);
                 startSpringSnap(target, startVel);
@@ -1117,7 +1310,11 @@ public class RecentsCarouselView extends FrameLayout {
     private void handleActionCancel() {
         removeCallbacks(longPressRunnable);
         setGrabbedVisual(grabbedVisualIndex, false);
-        if (dragMode == DragMode.SCROLL_VERTICAL) {
+        if (dragMode == DragMode.SCROLLBAR_DRAG) {
+            setScrollbarEngaged(false);
+            snapScrollToNearest(true);
+            releaseScrollSway();
+        } else if (dragMode == DragMode.SCROLL_VERTICAL) {
             snapScrollToNearest(true);
             releaseScrollSway();
         } else if (dragMode == DragMode.SWIPE_CONTEXT) {
@@ -1276,9 +1473,29 @@ public class RecentsCarouselView extends FrameLayout {
         removeCallbacks(stabilizeThumbnailsRunnable);
         wheelSpeedItemsPerSec = 0f;
         thumbnailsSuppressed = false;
+        setScrollbarEngaged(false);
         if (getItemCount() > 0 && selectedAdapterPos >= 0) {
             if (bannerBoundLightweight) {
                 rebindBanner();
+            }
+            if (moreBanners) {
+                for (int i = 0; i < boundUnfocusedViews.size(); i++) {
+                    View uv = boundUnfocusedViews.valueAt(i);
+                    if (isUnfocusedBannerView(uv)) {
+                        int aPos = visualToAdapterPos(boundUnfocusedViews.keyAt(i));
+                        if (aPos >= 0 && aPos < getItemCount()) {
+                            Result<?> r = adapter.getItem(aPos);
+                            if (r instanceof AppResult) {
+                                AppResult appResult = (AppResult) r;
+                                Bitmap cached = TaskSnapshotCache.get(appResult.getPojo().taskId);
+                                appResult.displayUnfocusedBanner(getContext(), uv, cached, greyscaleSnapshots, false);
+                                if (cached == null) {
+                                    requestSnapshotForAdapterPos(aPos, false);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             requestSnapshotsAroundSelection(true);
             layoutCarousel();
@@ -1465,8 +1682,9 @@ public class RecentsCarouselView extends FrameLayout {
         }
         final Result<?> dismissedResult = adapter.getItem(adapterPos);
         if (adapterPos == selectedAdapterPos && count > 1) {
-            int nextIdx = (adapterPos + 1 < count) ? (adapterPos + 1) : (adapterPos - 1);
-            pendingDismissReplacementPojoId = adapter.getItem(nextIdx).getPojoId();
+            int nextVisual = (visualIndex + 1 < count) ? (visualIndex + 1) : (visualIndex - 1);
+            int nextIdx = visualToAdapterPos(nextVisual);
+            pendingDismissReplacementPojoId = nextIdx >= 0 ? adapter.getItem(nextIdx).getPojoId() : null;
         } else {
             pendingDismissReplacementPojoId = null;
         }
@@ -1515,12 +1733,13 @@ public class RecentsCarouselView extends FrameLayout {
         }
         float focalY = height * 0.52f;
         float arcRadius = Math.max(height * 0.95f, DrawableUtils.dpToPx(getContext(), 520f));
-        float stepPx = unfocusedHeightPx + itemGapPx;
+        float stepPx = getSlotStepPx();
         int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
         boolean bannerGrabbed = (grabbedVisualIndex >= 0 && grabbedVisualIndex == selectedVisualIdx);
         float bannerScale = bannerGrabbed ? grabScale : 1f;
         float grabInset = bannerHeightPx * 0.5f * (1f - bannerScale);
-        float extraHalf = Math.max(0f, (bannerHeightPx - unfocusedHeightPx) * 0.5f - grabInset);
+        int baseUnfocusedH = (moreBanners && moreBannersAll) ? unfocusedBannerHeightPx : unfocusedHeightPx;
+        float extraHalf = Math.max(0f, (bannerHeightPx - baseUnfocusedH) * 0.5f - grabInset);
 
         for (int v = 0; v < count; v++) {
             if (v == dismissedVisualIdx) {
@@ -1547,7 +1766,9 @@ public class RecentsCarouselView extends FrameLayout {
                 boolean isSel = (v == selectedVisualIdx);
                 float scale = isSel ? 1f : Math.max(0.78f, 0.95f - normDist * 0.14f);
                 float left = isSel ? bannerHorizontalMarginPx : horizontalMarginPx + arcOffset;
-                float h = (isSel ? bannerHeightPx : unfocusedHeightPx) * scale;
+                int slotH = isSel ? bannerHeightPx
+                        : (shouldUseUnfocusedBanner(v, selectedVisualIdx) ? unfocusedBannerHeightPx : unfocusedHeightPx);
+                float h = slotH * scale;
                 float alpha = isSel ? 1f : Math.max(0.55f, 1.0f - normDist * 0.28f);
                 reflowStarts.put(pojoId, new ReflowStart(centerY, left, h, alpha));
             }
@@ -1588,15 +1809,17 @@ public class RecentsCarouselView extends FrameLayout {
         int bannerWidth = Math.max(1, width - 2 * bannerHorizontalMarginPx);
         float focalY = height * 0.52f;
         float arcRadius = Math.max(height * 0.95f, DrawableUtils.dpToPx(getContext(), 520f));
-        float stepPx = unfocusedHeightPx + itemGapPx;
+        float stepPx = getSlotStepPx();
         int selectedVisualIdx = adapterToVisualPos(selectedAdapterPos);
         boolean bannerGrabbed = (grabbedVisualIndex >= 0 && grabbedVisualIndex == selectedVisualIdx);
         float bannerGrabScale = bannerGrabbed ? grabScale : 1f;
         float grabInset = bannerHeightPx * 0.5f * (1f - bannerGrabScale);
-        float extraHalf = Math.max(0f, (bannerHeightPx - unfocusedHeightPx) * 0.5f - grabInset);
+        int baseUnfocusedH = (moreBanners && moreBannersAll) ? unfocusedBannerHeightPx : unfocusedHeightPx;
+        float extraHalf = Math.max(0f, (bannerHeightPx - baseUnfocusedH) * 0.5f - grabInset);
         boolean reflowActive = reflowProgress < 1f && !reflowStarts.isEmpty();
 
         int shrinkingVisualIdx = adapterToVisualPos(shrinkingAdapterPos);
+        float sesameFadeOut = openSesameActive ? (1f - clamp(openSesameProgress * 1.8f, 0f, 1f)) : 1f;
 
         // Track off-screen views to detach & recycle cleanly
         for (int i = boundUnfocusedViews.size() - 1; i >= 0; i--) {
@@ -1634,6 +1857,9 @@ public class RecentsCarouselView extends FrameLayout {
             boolean isSelected = (v == selectedVisualIdx);
             if (isSelected) {
                 selectedScreenCenterY = centerY;
+                if (openSesameActive) {
+                    continue;
+                }
             }
             if (centerY < -bannerHeightPx || centerY > height + bannerHeightPx) {
                 if (isSelected && bannerView != null) {
@@ -1646,6 +1872,7 @@ public class RecentsCarouselView extends FrameLayout {
             int childLeft;
             int childWidth;
             int childHeight;
+            boolean useUnfocusedBanner = false;
             if (isSelected) {
                 child = obtainAndBindBanner(adapterPos);
                 child.setVisibility(View.VISIBLE);
@@ -1653,10 +1880,11 @@ public class RecentsCarouselView extends FrameLayout {
                 childWidth = bannerWidth;
                 childHeight = bannerHeightPx;
             } else {
-                child = obtainAndBindUnfocused(v, adapterPos);
+                useUnfocusedBanner = shouldUseUnfocusedBanner(v, selectedVisualIdx);
+                child = obtainAndBindUnfocused(v, adapterPos, useUnfocusedBanner);
                 childLeft = horizontalMarginPx;
                 childWidth = unfocusedWidth;
-                childHeight = unfocusedHeightPx;
+                childHeight = useUnfocusedBanner ? unfocusedBannerHeightPx : unfocusedHeightPx;
             }
 
             layoutChildFrame(child, childLeft, Math.round(centerY - childHeight * 0.5f), childWidth, childHeight);
@@ -1729,7 +1957,7 @@ public class RecentsCarouselView extends FrameLayout {
                 float baseAlpha = Math.max(0.55f, 1.0f - normDist * 0.28f);
                 float swayTx = scrollSwayPx * (0.65f + normDist * 0.35f);
                 targetScale = scale;
-                targetAlpha = baseAlpha * dismissAlpha;
+                targetAlpha = baseAlpha * dismissAlpha * sesameFadeOut;
                 targetTx = arcOffset + horizTx + swayTx;
                 targetRotation = clamp(scrollSwayPx * 0.08f, -1.4f, 1.4f);
             }
@@ -1755,15 +1983,29 @@ public class RecentsCarouselView extends FrameLayout {
             child.setRotation(targetRotation);
             if (isSelected) {
                 applyBannerThumbnailParallax(centerY - focalY, finalTx);
+            } else if (useUnfocusedBanner) {
+                applyThumbnailParallaxToCard(
+                        child.findViewById(R.id.banner_snapshot),
+                        child,
+                        centerY - focalY,
+                        finalTx,
+                        unfocusedParallaxMatrix);
             }
         }
 
+        if (openSesameActive) {
+            applyOpenSesameLayout(width);
+        }
+
         lastSelectedScreenCenterY = selectedScreenCenterY;
-        if (contextMenuLayer.getVisibility() != View.GONE) {
+        if (!openSesameActive && contextMenuLayer.getVisibility() != View.GONE) {
             layoutChildFrame(contextMenuLayer, 0, 0, width, height);
             layoutContextMenuButtons(selectedScreenCenterY);
         }
         invalidateViewport();
+        if (showScrollbar) {
+            invalidate();
+        }
     }
 
     private void updateContextMenuVisibilityAndLayout() {
@@ -1927,29 +2169,36 @@ public class RecentsCarouselView extends FrameLayout {
         if (bannerSnapshotView == null) {
             bannerSnapshotView = bannerView.findViewById(R.id.banner_snapshot);
         }
-        if (bannerSnapshotView == null || bannerSnapshotView.getVisibility() != View.VISIBLE) {
+        applyThumbnailParallaxToCard(bannerSnapshotView, bannerView, dyFromFocal, cardTx, bannerParallaxMatrix);
+    }
+
+    private void applyThumbnailParallaxToCard(@Nullable ImageView snapshotView, @Nullable View cardView,
+                                              float dyFromFocal, float cardTx, Matrix matrix) {
+        if (snapshotView == null || cardView == null || snapshotView.getVisibility() != View.VISIBLE) {
             return;
         }
-        Drawable drawable = bannerSnapshotView.getDrawable();
+        Drawable drawable = snapshotView.getDrawable();
         if (drawable == null) {
             return;
         }
-        int vw = bannerSnapshotView.getWidth();
-        int vh = bannerSnapshotView.getHeight();
+        int vw = snapshotView.getWidth();
+        int vh = snapshotView.getHeight();
         if (vw <= 0 || vh <= 0) {
-            vw = bannerView.getWidth();
-            vh = bannerView.getHeight();
+            vw = cardView.getWidth();
+            vh = cardView.getHeight();
         }
         int bw = drawable.getIntrinsicWidth();
         int bh = drawable.getIntrinsicHeight();
         if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) {
             return;
         }
-        if (bannerSnapshotView.getScaleType() != ImageView.ScaleType.MATRIX) {
-            bannerSnapshotView.setScaleType(ImageView.ScaleType.MATRIX);
+        if (snapshotView.getScaleType() != ImageView.ScaleType.MATRIX) {
+            snapshotView.setScaleType(ImageView.ScaleType.MATRIX);
         }
         float baseScale = Math.max((float) vw / bw, (float) vh / bh);
-        float scale = Math.max(baseScale * 1.05f, Math.max((vw * 1.10f) / bw, (vh * 1.28f) / bh));
+        float scale = openSesameActive
+                ? baseScale
+                : Math.max(baseScale * 1.05f, Math.max((vw * 1.10f) / bw, (vh * 1.28f) / bh));
         float scaledW = bw * scale;
         float scaledH = bh * scale;
         float slackX = Math.max(0f, (scaledW - vw) * 0.5f);
@@ -1958,21 +2207,44 @@ public class RecentsCarouselView extends FrameLayout {
         float panY = clamp(-dyFromFocal * 0.80f, -slackY, slackY);
         float tx = (vw - scaledW) * 0.5f + panX;
         float ty = (vh - scaledH) * 0.5f + panY;
-        bannerParallaxMatrix.reset();
-        bannerParallaxMatrix.setScale(scale, scale);
-        bannerParallaxMatrix.postTranslate(tx, ty);
-        bannerSnapshotView.setImageMatrix(bannerParallaxMatrix);
+        matrix.reset();
+        matrix.setScale(scale, scale);
+        matrix.postTranslate(tx, ty);
+        snapshotView.setImageMatrix(matrix);
     }
 
-    private View obtainAndBindUnfocused(int visualIdx, int adapterPos) {
+    private View obtainAndBindUnfocused(int visualIdx, int adapterPos, boolean wantBanner) {
         View view = boundUnfocusedViews.get(visualIdx);
         if (view != null) {
-            return view;
+            if (isUnfocusedBannerView(view) == wantBanner) {
+                return view;
+            }
+            boundUnfocusedViews.remove(visualIdx);
+            recycleUnfocusedView(view);
         }
-        View convertView = recycledUnfocusedViews.isEmpty()
-                ? null
-                : recycledUnfocusedViews.remove(recycledUnfocusedViews.size() - 1);
-        View bound = adapter.getItem(adapterPos).display(getContext(), convertView, this, null);
+        View bound;
+        if (wantBanner) {
+            View convertView = recycledUnfocusedBannerViews.isEmpty()
+                    ? null
+                    : recycledUnfocusedBannerViews.remove(recycledUnfocusedBannerViews.size() - 1);
+            if (convertView == null) {
+                convertView = LayoutInflater.from(getContext()).inflate(R.layout.item_app_unfocused_banner, this, false);
+            }
+            Result<?> item = adapter.getItem(adapterPos);
+            if (item instanceof AppResult) {
+                AppResult appResult = (AppResult) item;
+                Bitmap cached = TaskSnapshotCache.get(appResult.getPojo().taskId);
+                appResult.displayUnfocusedBanner(getContext(), convertView, cached, greyscaleSnapshots, thumbnailsSuppressed);
+            } else {
+                convertView = item.display(getContext(), null, this, null);
+            }
+            bound = convertView;
+        } else {
+            View convertView = recycledUnfocusedViews.isEmpty()
+                    ? null
+                    : recycledUnfocusedViews.remove(recycledUnfocusedViews.size() - 1);
+            bound = adapter.getItem(adapterPos).display(getContext(), convertView, this, null);
+        }
         if (bound.getParent() != this) {
             attachChild(bound, 0);
         }
@@ -2044,7 +2316,24 @@ public class RecentsCarouselView extends FrameLayout {
         view.setScaleY(1f);
         view.setAlpha(1f);
         detachChild(view);
-        recycledUnfocusedViews.add(view);
+        if (isUnfocusedBannerView(view)) {
+            recycledUnfocusedBannerViews.add(view);
+        } else {
+            recycledUnfocusedViews.add(view);
+        }
+    }
+
+    private static boolean isUnfocusedBannerView(@Nullable View view) {
+        return view != null && view.findViewById(R.id.banner_snapshot) != null;
+    }
+
+    private boolean shouldUseUnfocusedBanner(int visualIdx, int selectedVisualIdx) {
+        return moreBanners && (moreBannersAll || Math.abs(visualIdx - selectedVisualIdx) == 1);
+    }
+
+    private float getSlotStepPx() {
+        int h = (moreBanners && moreBannersAll) ? unfocusedBannerHeightPx : unfocusedHeightPx;
+        return h + itemGapPx;
     }
 
     private static void layoutChildFrame(View child, int left, int top, int width, int height) {
@@ -2093,12 +2382,21 @@ public class RecentsCarouselView extends FrameLayout {
             return;
         }
         requestSnapshotForAdapterPos(selectedAdapterPos, includeNeighbors);
-        if (includeNeighbors) {
+        if (includeNeighbors || moreBanners) {
             if (selectedAdapterPos - 1 >= 0) {
                 requestSnapshotForAdapterPos(selectedAdapterPos - 1, false);
             }
             if (selectedAdapterPos + 1 < count) {
                 requestSnapshotForAdapterPos(selectedAdapterPos + 1, false);
+            }
+        }
+        if (moreBanners && moreBannersAll) {
+            for (int i = 0; i < boundUnfocusedViews.size(); i++) {
+                int v = boundUnfocusedViews.keyAt(i);
+                int aPos = visualToAdapterPos(v);
+                if (aPos >= 0 && aPos < count && isUnfocusedBannerView(boundUnfocusedViews.valueAt(i))) {
+                    requestSnapshotForAdapterPos(aPos, false);
+                }
             }
         }
     }
@@ -2127,6 +2425,21 @@ public class RecentsCarouselView extends FrameLayout {
                     AppResult selected = getSelectedAppResult();
                     if (selected != null && selected.getPojo().taskId == taskId) {
                         rebindBanner();
+                    }
+                    if (moreBanners) {
+                        for (int i = 0; i < boundUnfocusedViews.size(); i++) {
+                            View uv = boundUnfocusedViews.valueAt(i);
+                            if (isUnfocusedBannerView(uv)) {
+                                int aPos = visualToAdapterPos(boundUnfocusedViews.keyAt(i));
+                                if (aPos >= 0 && aPos < getItemCount()) {
+                                    Result<?> r = adapter.getItem(aPos);
+                                    if (r instanceof AppResult && ((AppResult) r).getPojo().taskId == taskId) {
+                                        ((AppResult) r).displayUnfocusedBanner(getContext(), uv, fresh, greyscaleSnapshots, thumbnailsSuppressed);
+                                        applyThumbnailParallaxToCard(uv.findViewById(R.id.banner_snapshot), uv, 0f, 0f, unfocusedParallaxMatrix);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -2189,7 +2502,7 @@ public class RecentsCarouselView extends FrameLayout {
         if (visualIdx < 0 || visualIdx >= count) {
             return -1;
         }
-        return visualIdx;
+        return reverseOrder ? (count - 1 - visualIdx) : visualIdx;
     }
 
     private int adapterToVisualPos(int adapterPos) {
@@ -2197,15 +2510,244 @@ public class RecentsCarouselView extends FrameLayout {
         if (adapterPos < 0 || adapterPos >= count) {
             return -1;
         }
-        return adapterPos;
+        return reverseOrder ? (count - 1 - adapterPos) : adapterPos;
     }
 
     private float computeSlotCenterY(int visualIdx, float focalY, float stepPx, float extraHalf) {
         float distIdx = visualIdx - scrollItemPos;
-        float t = clamp(Math.abs(distIdx), 0f, 1f);
+        float d = Math.abs(distIdx);
+        float t = clamp(d, 0f, 1f);
         float eased = t * t * (3f - 2f * t);
-        float push = (distIdx >= 0f ? 1f : -1f) * extraHalf * eased;
+        float sign = distIdx >= 0f ? 1f : -1f;
+        float push = sign * extraHalf * eased;
+        if (moreBanners && !moreBannersAll) {
+            float adjExtraHalf = Math.max(0f, (unfocusedBannerHeightPx - unfocusedHeightPx) * 0.5f);
+            float tAdj = clamp(d * 0.5f, 0f, 1f);
+            float easedAdj = tAdj * tAdj * (3f - 2f * tAdj);
+            push += sign * (2f * adjExtraHalf) * easedAdj;
+        }
         return focalY + distIdx * stepPx + push;
+    }
+
+    private void scrubToScrollbarY(float y, boolean playHaptic) {
+        int count = getItemCount();
+        int height = getHeight();
+        if (count <= 1 || height <= 0) {
+            return;
+        }
+        float trackTop = scrollbarPaddingVPx;
+        float trackBottom = Math.max(trackTop + 1f, height - scrollbarPaddingVPx);
+        float trackHeight = trackBottom - trackTop;
+        float thumbHeight = computeScrollbarThumbHeight(trackHeight, count);
+        float usable = Math.max(1f, trackHeight - thumbHeight);
+        float frac = clamp((y - trackTop - thumbHeight * 0.5f) / usable, 0f, 1f);
+        float oldPos = scrollItemPos;
+        float newPos = frac * (count - 1);
+        scrollItemPos = newPos;
+        rawScrollItemPos = unmapScrollPos(newPos, count - 1);
+        updateWheelSpeed(oldPos, newPos);
+        thumbnailsSuppressed = isWheelMovingFast();
+        scheduleThumbnailStabilize();
+        updateAutoSelectionFromScroll(playHaptic);
+        layoutCarousel();
+        invalidate();
+    }
+
+    private float computeScrollbarThumbHeight(float trackHeight, int count) {
+        if (count <= 1) {
+            return trackHeight;
+        }
+        float visibleRatio = clamp(5.5f / count, 0.16f, 0.58f);
+        return clamp(trackHeight * visibleRatio, scrollbarMinThumbPx, trackHeight * 0.72f);
+    }
+
+    private void setScrollbarEngaged(boolean engaged) {
+        if (!showScrollbar || scrollbarEngaged == engaged) {
+            return;
+        }
+        scrollbarEngaged = engaged;
+        cancelAnimator(scrollbarAnimator);
+        scrollbarAnimator = ValueAnimator.ofFloat(scrollbarEngagement, engaged ? 1f : 0f);
+        scrollbarAnimator.setDuration(engaged ? 110 : 220);
+        scrollbarAnimator.setInterpolator(FAST_OUT_SLOW_IN);
+        scrollbarAnimator.addUpdateListener(anim -> {
+            scrollbarEngagement = (float) anim.getAnimatedValue();
+            invalidate();
+        });
+        scrollbarAnimator.start();
+    }
+
+    @Override
+    protected void dispatchDraw(@NonNull Canvas canvas) {
+        super.dispatchDraw(canvas);
+        int count = getItemCount();
+        int height = getHeight();
+        if (!showScrollbar || count <= 1 || height <= 0 || openSesameActive) {
+            return;
+        }
+        float trackTop = scrollbarPaddingVPx;
+        float trackBottom = Math.max(trackTop + 1f, height - scrollbarPaddingVPx);
+        float trackHeight = trackBottom - trackTop;
+        float baseThumbH = computeScrollbarThumbHeight(trackHeight, count);
+        int maxIdx = Math.max(1, count - 1);
+        float norm = clamp(scrollItemPos / maxIdx, 0f, 1f);
+        float overscroll = 0f;
+        if (scrollItemPos < 0f) {
+            overscroll = Math.min(0.45f, -scrollItemPos * 0.25f);
+        } else if (scrollItemPos > maxIdx) {
+            overscroll = Math.min(0.45f, (scrollItemPos - maxIdx) * 0.25f);
+        }
+        float thumbH = Math.max(scrollbarMinThumbPx * 0.6f, baseThumbH * (1f - overscroll));
+        float thumbTop = trackTop + norm * (trackHeight - thumbH);
+        float width = scrollbarIdleWidthPx + (scrollbarActiveWidthPx - scrollbarIdleWidthPx) * scrollbarEngagement;
+        float left = scrollbarOffsetXPx;
+        float right = left + width;
+        float radius = width * 0.5f;
+
+        scrollbarTrackPaint.setAlpha(Math.round(Color.alpha(0x28FFFFFF) * (0.55f + 0.45f * scrollbarEngagement)));
+        scrollbarTrackRect.set(left, trackTop, right, trackBottom);
+        canvas.drawRoundRect(scrollbarTrackRect, radius, radius, scrollbarTrackPaint);
+
+        scrollbarThumbPaint.setAlpha(Math.round(255f * (0.45f + 0.50f * scrollbarEngagement)));
+        scrollbarThumbRect.set(left, thumbTop, right, thumbTop + thumbH);
+        canvas.drawRoundRect(scrollbarThumbRect, radius, radius, scrollbarThumbPaint);
+    }
+
+    private void startOpenSesameLaunch(final Result<?> result, final int tappedAdapterPos, @Nullable View tappedView) {
+        if (openSesameActive) {
+            return;
+        }
+        removeCallbacks(flingTick);
+        removeCallbacks(stabilizeThumbnailsRunnable);
+        removeCallbacks(longPressRunnable);
+        if (!scrollScroller.isFinished()) {
+            scrollScroller.abortAnimation();
+        }
+        cancelAnimator(scrollAnimator);
+        cancelAnimator(swayAnimator);
+        cancelAnimator(horizontalAnimator);
+        cancelAnimator(grabAnimator);
+        cancelAnimator(openSesameAnimator);
+
+        View sourceRectView = tappedView != null ? tappedView : bannerView;
+        if (sourceRectView != null) {
+            sesameStartLeft = sourceRectView.getLeft() + sourceRectView.getTranslationX();
+            sesameStartTop = sourceRectView.getTop() + sourceRectView.getTranslationY();
+            sesameStartWidth = Math.max(1f, sourceRectView.getWidth() * sourceRectView.getScaleX());
+            sesameStartHeight = Math.max(1f, sourceRectView.getHeight() * sourceRectView.getScaleY());
+        } else {
+            sesameStartLeft = bannerHorizontalMarginPx;
+            sesameStartTop = (getHeight() - bannerHeightPx) * 0.5f;
+            sesameStartWidth = Math.max(1f, getWidth() - 2 * bannerHorizontalMarginPx);
+            sesameStartHeight = bannerHeightPx;
+        }
+
+        sesameTargetHeight = getHeight();
+        ViewParent p = getParent();
+        if (p instanceof View && ((View) p).getParent() instanceof View) {
+            View root = (View) ((View) p).getParent();
+            int rootH = root.getHeight();
+            int topInRoot = ((View) p).getTop() + getTop();
+            if (rootH > topInRoot) {
+                sesameTargetHeight = rootH - topInRoot;
+            }
+        }
+
+        if (tappedAdapterPos != selectedAdapterPos) {
+            selectedAdapterPos = tappedAdapterPos;
+            selectedPojoId = result.getPojoId();
+            bannerBoundAdapterPos = -1;
+        }
+        thumbnailsSuppressed = false;
+        View bv = obtainAndBindBanner(tappedAdapterPos);
+        bv.setVisibility(View.VISIBLE);
+        bv.bringToFront();
+        contextMenuLayer.setVisibility(View.GONE);
+
+        openSesameActive = true;
+        openSesameProgress = 0f;
+        if (callback != null) {
+            callback.onOpenSesameProgress(0f);
+        }
+
+        openSesameAnimator = ValueAnimator.ofFloat(0f, 1f);
+        openSesameAnimator.setDuration(190L);
+        openSesameAnimator.setInterpolator(FAST_OUT_SLOW_IN);
+        openSesameAnimator.addUpdateListener(anim -> {
+            openSesameProgress = (float) anim.getAnimatedValue();
+            if (callback != null) {
+                callback.onOpenSesameProgress(openSesameProgress);
+            }
+            layoutCarousel();
+        });
+        openSesameAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                openSesameProgress = 1f;
+                applyOpenSesameLayout(getWidth());
+                if (bannerView != null) {
+                    bannerView.setTag(R.id.banner_scrim, Boolean.TRUE);
+                }
+                if (callback != null) {
+                    callback.onOpenSesameProgress(1f);
+                    callback.onLaunchSelected(result, bannerView);
+                }
+            }
+        });
+        openSesameAnimator.start();
+    }
+
+    private void applyOpenSesameLayout(int width) {
+        if (bannerView == null || width <= 0) {
+            return;
+        }
+        float p = clamp(openSesameProgress, 0f, 1f);
+        float curLeft = sesameStartLeft + (0f - sesameStartLeft) * p;
+        float curTop = sesameStartTop + (0f - sesameStartTop) * p;
+        float curW = sesameStartWidth + (width - sesameStartWidth) * p;
+        float targetH = sesameTargetHeight > 0f ? sesameTargetHeight : getHeight();
+        float curH = sesameStartHeight + (targetH - sesameStartHeight) * p;
+
+        layoutChildFrame(bannerView, Math.round(curLeft), Math.round(curTop), Math.max(1, Math.round(curW)), Math.max(1, Math.round(curH)));
+        bannerView.setPivotX(0f);
+        bannerView.setPivotY(0f);
+        bannerView.setScaleX(1f);
+        bannerView.setScaleY(1f);
+        bannerView.setTranslationX(0f);
+        bannerView.setRotation(0f);
+        bannerView.setAlpha(1f);
+
+        float curRadius = bannerCornerRadiusPx * (1f - p);
+        bannerView.setTag(R.id.banner_app_name, Float.valueOf(curRadius));
+        bannerView.invalidateOutline();
+
+        float uiFade = 1f - clamp(p * 2.1f, 0f, 1f);
+        View outline = bannerView.findViewById(R.id.banner_outline);
+        if (outline != null) {
+            outline.setAlpha(uiFade);
+        }
+        View scrim = bannerView.findViewById(R.id.banner_scrim);
+        if (scrim != null) {
+            scrim.setAlpha(uiFade);
+        }
+        View name = bannerView.findViewById(R.id.banner_app_name);
+        if (name != null) {
+            name.setAlpha(uiFade);
+        }
+        View meta = bannerView.findViewById(R.id.banner_app_meta);
+        if (meta != null) {
+            meta.setAlpha(uiFade);
+        }
+
+        if (bannerSnapshotView == null) {
+            bannerSnapshotView = bannerView.findViewById(R.id.banner_snapshot);
+        }
+        if (bannerSnapshotView != null && greyscaleSnapshots && bannerSnapshotView.getVisibility() == View.VISIBLE) {
+            float sat = clamp((p - 0.1f) * 1.4f, 0f, 1f);
+            sesameSatMatrix.setSaturation(sat);
+            bannerSnapshotView.setColorFilter(new ColorMatrixColorFilter(sesameSatMatrix));
+        }
+        applyBannerThumbnailParallax(lastBannerParallaxDy * (1f - p), lastBannerParallaxTx * (1f - p));
     }
 
     private static float applyWheelDetent(float rawPos, int maxIdx) {

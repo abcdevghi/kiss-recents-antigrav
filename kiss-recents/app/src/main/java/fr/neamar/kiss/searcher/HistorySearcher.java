@@ -95,6 +95,7 @@ public class HistorySearcher extends Searcher {
 
     public static void invalidateCachedTasks() {
         lastFetchUptimeMs = 0L;
+        RunningApps.invalidateMemoryCache();
     }
 
     public static List<AppPojo> getRecentCachedTasks(long maxAgeMs) {
@@ -201,6 +202,8 @@ public class HistorySearcher extends Searcher {
                     app.rssKb = 0;
                     app.taskId = -1;
                     app.hasTaskIcon = false;
+                    app.recentTaskRank = -1;
+                    app.isTopHistory = false;
                     if (app.getUserHandle().isCurrentUser()) {
                         List<AppPojo> list = appsByPackage.get(app.packageName);
                         if (list == null) {
@@ -277,6 +280,8 @@ public class HistorySearcher extends Searcher {
                 entry.taskId = task.taskId;
                 entry.hasTaskIcon = task.hasTaskIcon;
                 entry.rssKb = getRssKb(snapshot.rssKbByPackage, task.packageName);
+                entry.recentTaskRank = result.tasks.size();
+                entry.isTopHistory = entry.recentTaskRank < 5;
                 entry.relevance = relevance--;
                 result.tasks.add(entry);
                 taskPackages.add(task.packageName);
@@ -302,9 +307,53 @@ public class HistorySearcher extends Searcher {
                     return Long.compare(b.rssKb, a.rssKb);
                 }
             });
-            relevance = RUNNING_RELEVANCE_BASE;
-            for (AppPojo app : result.others) {
-                app.relevance = relevance--;
+
+            boolean ramHistorySort = PreferenceManager.getDefaultSharedPreferences(activity)
+                    .getBoolean("ram-history-sort", false);
+            if (ramHistorySort) {
+                int historyCount = Math.min(5, result.tasks.size());
+                List<AppPojo> ramAlive = new ArrayList<>();
+                List<AppPojo> deadZeroRam = new ArrayList<>();
+                for (int i = historyCount; i < result.tasks.size(); i++) {
+                    AppPojo app = result.tasks.get(i);
+                    if (app.rssKb > 0) {
+                        ramAlive.add(app);
+                    } else {
+                        deadZeroRam.add(app);
+                    }
+                }
+                for (AppPojo app : result.others) {
+                    if (app.rssKb > 0) {
+                        ramAlive.add(app);
+                    } else {
+                        deadZeroRam.add(app);
+                    }
+                }
+                // RAM block sits at top (lowest relevance -> top, highest RAM -> nearest bottom/history)
+                Collections.sort(ramAlive, new Comparator<AppPojo>() {
+                    @Override
+                    public int compare(AppPojo a, AppPojo b) {
+                        return Long.compare(a.rssKb, b.rssKb);
+                    }
+                });
+                int ramRel = RUNNING_RELEVANCE_BASE;
+                for (AppPojo app : ramAlive) {
+                    app.relevance = ramRel++;
+                }
+                // Top 5 history block sits below RAM (T4 at top of history, T0 at bottom of history)
+                for (int i = 0; i < historyCount; i++) {
+                    result.tasks.get(i).relevance = TASKS_RELEVANCE_BASE - i;
+                }
+                // Dead 0-RAM items sit on the opposite side of RAM (below history)
+                int deadRel = TASKS_RELEVANCE_BASE + 100000;
+                for (AppPojo app : deadZeroRam) {
+                    app.relevance = deadRel++;
+                }
+            } else {
+                relevance = RUNNING_RELEVANCE_BASE;
+                for (AppPojo app : result.others) {
+                    app.relevance = relevance--;
+                }
             }
 
             Set<String> liveKeptCandidates = new HashSet<>(taskPackages);

@@ -2,6 +2,7 @@ package fr.neamar.kiss;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
@@ -15,8 +16,12 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.text.format.Formatter;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.TextView;
 import android.window.SplashScreenView;
 
 import androidx.activity.OnBackPressedCallback;
@@ -74,6 +79,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
     private WallpaperClearLayout rootLayout;
     private View listContainer;
+    private View searchBarView;
+    private TextView homeBarView;
     private View emptyListView;
     private View launcherButton;
     private View loaderSpinner;
@@ -88,6 +95,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private boolean sessionOpenedFromHome;
     private boolean userInteractedInRecents;
     private boolean resetCarouselOnNextResume;
+    private boolean lastFocusCurrentApp;
+    private boolean lastReverseOrder;
     private boolean lastWallpaperEnabled;
     private boolean lastDimOverlay;
     private boolean lastBlurEnabled;
@@ -138,10 +147,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean wallpaperEnabled = Appearance.isWallpaperEnabled(prefs);
         rootLayout = findViewById(R.id.mainRoot);
         listContainer = findViewById(R.id.resultLayout);
+        searchBarView = findViewById(R.id.searchEditLayout);
+        homeBarView = findViewById(R.id.homeBar);
         carousel = findViewById(R.id.recentsCarousel);
         carousel.setTransparentViewport(wallpaperEnabled);
         syncWallpaperEffects(true);
-        Appearance.applyRoundedCorners(prefs, findViewById(R.id.searchEditLayout), listContainer);
+        Appearance.applyRoundedCorners(prefs, searchBarView, listContainer);
         emptyListView = findViewById(android.R.id.empty);
         launcherButton = findViewById(R.id.launcherButton);
         loaderSpinner = findViewById(R.id.loaderBar);
@@ -151,7 +162,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         displayLoader(!providersLoaded);
 
         adapter = new RecordAdapter(this, new ArrayList<>());
-        carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
+        syncFeaturePrefs(true);
         carousel.setCallback(new RecentsCarouselView.Callback() {
             @Override
             public boolean canDismiss(Result<?> result) {
@@ -160,9 +171,21 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
             @Override
             public boolean includeInClearAll(Result<?> result) {
+                if (!(result instanceof AppResult)) {
+                    return false;
+                }
+                AppResult appResult = (AppResult) result;
                 // Apps marked "Don't clear" keep running
-                return result instanceof AppResult
-                        && !KeepAlive.isKept(MainActivity.this, ((AppResult) result).getPackageName());
+                if (KeepAlive.isKept(MainActivity.this, appResult.getPackageName())) {
+                    return false;
+                }
+                // Optionally protect top 5 history tasks from Clear All
+                if (prefs != null
+                        && prefs.getBoolean("clear-all-keep-history", false)
+                        && appResult.getPojo().isTopHistory) {
+                    return false;
+                }
+                return true;
             }
 
             @Override
@@ -170,6 +193,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 userInteractedInRecents = true;
                 stopApps(results);
                 adapter.removeResults(results);
+                if (homeBarView != null) {
+                    homeBarView.postDelayed(MainActivity.this::updateTotalRamDisplay, 350L);
+                }
             }
 
             @Override
@@ -177,6 +203,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 explicitlyNavigatedAway = true;
                 resetCarouselOnNextResume = true;
                 resetRecentsPressState();
+                if (sourceView != null && Boolean.TRUE.equals(sourceView.getTag(R.id.banner_scrim))) {
+                    disableActivityTransition();
+                }
                 result.launch(MainActivity.this, sourceView, MainActivity.this);
             }
 
@@ -196,6 +225,21 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             @Override
             public void onUserInteracted() {
                 userInteractedInRecents = true;
+            }
+
+            @Override
+            public void onOpenSesameProgress(float progress) {
+                if (searchBarView != null) {
+                    searchBarView.setAlpha(Math.max(0f, 1f - progress * 2.2f));
+                }
+                if (listContainer != null) {
+                    if (progress > 0f) {
+                        listContainer.setClipToOutline(false);
+                        listContainer.setTranslationZ(32f);
+                    } else {
+                        listContainer.setTranslationZ(0f);
+                    }
+                }
             }
         });
         carousel.setAdapter(adapter);
@@ -229,8 +273,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         });
 
         // The search bar only sends the user Home
-        findViewById(R.id.searchEditLayout).setOnClickListener(v -> goHome());
-        findViewById(R.id.homeBar).setOnClickListener(v -> goHome());
+        searchBarView.setOnClickListener(v -> goHome());
+        homeBarView.setOnClickListener(v -> goHome());
 
         // Left button: settings
         launcherButton.setOnClickListener(v -> {
@@ -245,6 +289,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             clearAllRecents();
         });
 
+        updateTotalRamDisplay();
         registerScreenLockReceiver();
         handleRecentsPress(launchIntent, true, false);
     }
@@ -285,8 +330,10 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
 
         dismissPopup();
+        resetOpenSesameUi();
         syncWallpaperEffects(false);
-        carousel.setGreyscaleSnapshots(prefs.getBoolean("snapshot-greyscale", true));
+        syncFeaturePrefs(false);
+        updateTotalRamDisplay();
 
         if (KissApplication.getApplication(this).getDataHandler().isAllProvidersLoaded()) {
             displayLoader(false);
@@ -329,6 +376,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
         resetCarouselOnNextResume = true;
         resetRecentsPressState();
+        resetOpenSesameUi();
         if (carousel != null) {
             carousel.closeContextMenu();
             carousel.resetSelection();
@@ -358,8 +406,80 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         disableActivityTransition();
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
+        resetOpenSesameUi();
         syncWallpaperEffects(false);
+        syncFeaturePrefs(false);
+        updateTotalRamDisplay();
         handleRecentsPress(intent, false, wasNavigatedAway);
+    }
+
+    private void syncFeaturePrefs(boolean initial) {
+        if (prefs == null || carousel == null) {
+            return;
+        }
+        boolean focusCurrent = prefs.getBoolean("focus-current-app", false);
+        boolean reverseOrder = prefs.getBoolean("reverse-order", false);
+        boolean moreBanners = prefs.getBoolean("more-banners", false);
+        boolean moreBannersAll = prefs.getBoolean("more-banners-all", false);
+        boolean showScrollbar = prefs.getBoolean("show-scrollbar", false);
+        boolean openSesame = prefs.getBoolean("open-sesame", false);
+        boolean greyscale = prefs.getBoolean("snapshot-greyscale", true);
+
+        if (!initial && (focusCurrent != lastFocusCurrentApp || reverseOrder != lastReverseOrder)) {
+            resetCarouselOnNextResume = true;
+        }
+        lastFocusCurrentApp = focusCurrent;
+        lastReverseOrder = reverseOrder;
+
+        carousel.setGreyscaleSnapshots(greyscale);
+        carousel.setFocusCurrentApp(focusCurrent);
+        carousel.setReverseOrder(reverseOrder);
+        carousel.setMoreBanners(moreBanners, moreBannersAll);
+        carousel.setShowScrollbar(showScrollbar);
+        carousel.setOpenSesame(openSesame);
+    }
+
+    private void resetOpenSesameUi() {
+        if (carousel != null) {
+            carousel.resetOpenSesame();
+        }
+        if (searchBarView != null) {
+            searchBarView.setAlpha(1f);
+        }
+        if (listContainer != null) {
+            listContainer.setTranslationZ(0f);
+            if (prefs != null) {
+                Appearance.applyRoundedCorners(prefs, searchBarView, listContainer);
+            }
+        }
+    }
+
+    private void updateTotalRamDisplay() {
+        if (homeBarView == null || prefs == null) {
+            return;
+        }
+        if (!prefs.getBoolean("show-total-ram", false)) {
+            homeBarView.setText("");
+            return;
+        }
+        ActivityManager am = ContextCompat.getSystemService(this, ActivityManager.class);
+        if (am == null) {
+            homeBarView.setText("");
+            return;
+        }
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        if (mi.totalMem <= 0L) {
+            homeBarView.setText("");
+            return;
+        }
+        long usedBytes = Math.max(0L, mi.totalMem - mi.availMem);
+        String usedStr = Formatter.formatShortFileSize(this, usedBytes);
+        String totalStr = Formatter.formatShortFileSize(this, mi.totalMem);
+        homeBarView.setGravity(Gravity.CENTER);
+        homeBarView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        homeBarView.setAlpha(0.8f);
+        homeBarView.setText(getString(R.string.total_ram_format, usedStr, totalStr));
     }
 
     private void resetRecentsPressState() {

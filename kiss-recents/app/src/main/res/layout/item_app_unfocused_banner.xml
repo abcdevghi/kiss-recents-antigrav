@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/unfocused_banner_card_height"
+    android:background="#FF181B22"
+    android:clipChildren="true"
+    android:clipToPadding="true">
+
+    <ImageView
+        android:id="@+id/banner_snapshot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop" />
+
+    <ImageView
+        android:id="@+id/banner_fallback_icon"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:alpha="0.28"
+        android:contentDescription="@null"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/banner_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="68dp"
+        android:layout_gravity="top"
+        android:background="@drawable/banner_scrim" />
+
+    <LinearLayout
+        android:id="@+id/banner_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp">
+
+        <ImageView
+            android:id="@+id/unfocused_banner_icon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginEnd="10dp"
+            android:contentDescription="@null"
+            tools:src="@drawable/ic_launcher_white" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/banner_app_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="1"
+                android:shadowColor="#B3000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:textColor="@android:color/white"
+                android:textDirection="locale"
+                android:textSize="16sp"
+                tools:text="@string/stub_application" />
+
+            <TextView
+                android:id="@+id/banner_app_meta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:shadowColor="#B3000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="3"
+                android:textColor="#E6FFFFFF"
+                android:textDirection="locale"
+                android:textSize="11sp"
+                android:visibility="gone"
+                tools:text="@string/keep_alive_label"
+                tools:visibility="visible" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

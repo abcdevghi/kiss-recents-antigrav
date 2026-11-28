@@ -13,7 +13,9 @@ import android.os.RemoteException;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Client for the privileged Recents Binder service attached to launch intents by {@code RecentsHook}.
@@ -33,6 +35,7 @@ public final class RecentsBridgeClient {
     private static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
     private static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
     private static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
+    private static final int TX_GET_PROCESS_MEMORY = IBinder.FIRST_CALL_TRANSACTION + 8;
 
     private static volatile IBinder bridgeBinder;
 
@@ -333,6 +336,44 @@ public final class RecentsBridgeClient {
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
             return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+        } catch (RemoteException e) {
+            bridgeBinder = null;
+            return null;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    @Nullable
+    public static Map<String, Long> getProcessMemoryKb() {
+        IBinder binder = bridgeBinder;
+        if (binder == null) {
+            return null;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESCRIPTOR);
+            if (!binder.transact(TX_GET_PROCESS_MEMORY, data, reply, 0)) {
+                return null;
+            }
+            reply.readException();
+            int count = reply.readInt();
+            if (count < 0) {
+                return null;
+            }
+            Map<String, Long> result = new HashMap<>(count);
+            for (int i = 0; i < count; i++) {
+                String pkg = reply.readString();
+                long kb = reply.readLong();
+                if (pkg != null && !pkg.isEmpty() && kb > 0L) {
+                    result.put(pkg, kb);
+                }
+            }
+            return result;
         } catch (RemoteException e) {
             bridgeBinder = null;
             return null;

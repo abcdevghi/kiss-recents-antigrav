@@ -19,6 +19,7 @@ import android.hardware.HardwareBuffer;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Debug;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
@@ -26,8 +27,11 @@ import android.os.ParcelFileDescriptor;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Binder IPC service hosted inside SystemUI (or One UI Home) by the Xposed hook.
@@ -45,6 +49,7 @@ final class RecentsBridgeService extends Binder {
     static final int TX_START_TASK_SPLIT = IBinder.FIRST_CALL_TRANSACTION + 5;
     static final int TX_GET_TASK_SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 6;
     static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
+    static final int TX_GET_PROCESS_MEMORY = IBinder.FIRST_CALL_TRANSACTION + 8;
 
     private static final int ACTIVITY_TYPE_STANDARD = 1;
     private static final int ACTIVITY_TYPE_HOME = 2;
@@ -179,6 +184,11 @@ final class RecentsBridgeService extends Binder {
                 byte[] jpeg = getWallpaperBitmapBytes();
                 reply.writeNoException();
                 reply.writeByteArray(jpeg);
+                return true;
+            }
+            case TX_GET_PROCESS_MEMORY: {
+                data.enforceInterface(DESCRIPTOR);
+                handleGetProcessMemory(reply);
                 return true;
             }
             default:
@@ -390,6 +400,88 @@ final class RecentsBridgeService extends Binder {
             reply.writeString(label);
             reply.writeLong(readLongField(lastActiveTimeField, info, 0L));
             reply.writeInt(hasIcon ? 1 : 0);
+        }
+    }
+
+    private static void handleGetProcessMemory(Parcel reply) {
+        Context ctx = resolveHostContext();
+        if (ctx == null) {
+            reply.writeNoException();
+            reply.writeInt(-1);
+            return;
+        }
+        long token = Binder.clearCallingIdentity();
+        try {
+            ActivityManager am = ctx.getSystemService(ActivityManager.class);
+            if (am == null) {
+                reply.writeNoException();
+                reply.writeInt(-1);
+                return;
+            }
+            List<ActivityManager.RunningAppProcessInfo> procs = am.getRunningAppProcesses();
+            if (procs == null || procs.isEmpty()) {
+                reply.writeNoException();
+                reply.writeInt(0);
+                return;
+            }
+            int n = procs.size();
+            int[] pids = new int[n];
+            String[] pkgs = new String[n];
+            int count = 0;
+            for (int i = 0; i < n; i++) {
+                ActivityManager.RunningAppProcessInfo info = procs.get(i);
+                if (info == null || info.pid <= 0) {
+                    continue;
+                }
+                String pkg = null;
+                if (info.pkgList != null && info.pkgList.length > 0 && info.pkgList[0] != null) {
+                    pkg = info.pkgList[0];
+                } else if (info.processName != null) {
+                    int colon = info.processName.indexOf(':');
+                    pkg = colon < 0 ? info.processName : info.processName.substring(0, colon);
+                }
+                if (pkg == null || pkg.isEmpty()) {
+                    continue;
+                }
+                pids[count] = info.pid;
+                pkgs[count] = pkg;
+                count++;
+            }
+            Map<String, Long> totals = new HashMap<>();
+            final int chunk = 32;
+            for (int offset = 0; offset < count; offset += chunk) {
+                int end = Math.min(count, offset + chunk);
+                int[] slice = Arrays.copyOfRange(pids, offset, end);
+                Debug.MemoryInfo[] memInfos = am.getProcessMemoryInfo(slice);
+                if (memInfos == null) {
+                    continue;
+                }
+                int limit = Math.min(slice.length, memInfos.length);
+                for (int j = 0; j < limit; j++) {
+                    Debug.MemoryInfo mi = memInfos[j];
+                    if (mi == null) {
+                        continue;
+                    }
+                    int pssKb = mi.getTotalPss();
+                    if (pssKb > 0) {
+                        String pkg = pkgs[offset + j];
+                        Long prev = totals.get(pkg);
+                        totals.put(pkg, (prev == null ? 0L : prev) + pssKb);
+                    }
+                }
+            }
+            reply.writeNoException();
+            reply.writeInt(totals.size());
+            for (Map.Entry<String, Long> e : totals.entrySet()) {
+                reply.writeString(e.getKey());
+                reply.writeLong(e.getValue());
+            }
+        } catch (Throwable t) {
+            HookLog.debug("getProcessMemory failed: " + t);
+            reply.writeNoException();
+            reply.writeInt(-1);
+        } finally {
+            Binder.restoreCallingIdentity(token);
         }
     }
 

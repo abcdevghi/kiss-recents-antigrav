@@ -26,9 +26,16 @@ public final class RunningApps {
 
     private static volatile Map<String, Long> cachedRssKbByPackage = Collections.emptyMap();
     private static volatile long cachedRssUptimeMs = 0L;
+    private static volatile Map<String, Long> cachedBridgeMemByPackage = Collections.emptyMap();
+    private static volatile long cachedBridgeMemUptimeMs = 0L;
     private static final AtomicBoolean RSS_REFRESH_IN_FLIGHT = new AtomicBoolean(false);
 
     private RunningApps() {
+    }
+
+    public static void invalidateMemoryCache() {
+        cachedRssUptimeMs = 0L;
+        cachedBridgeMemUptimeMs = 0L;
     }
 
     public static final class Snapshot {
@@ -59,8 +66,11 @@ public final class RunningApps {
             if (rootHandler.isRootActivated()) {
                 rssKbByPackage = cachedRssKbByPackage;
                 refreshRssAsyncIfStale(rootHandler);
+                if (rssKbByPackage.isEmpty()) {
+                    rssKbByPackage = fetchBridgeMemory();
+                }
             } else {
-                rssKbByPackage = Collections.emptyMap();
+                rssKbByPackage = fetchBridgeMemory();
             }
             return new Snapshot(bridgeTasks, rssKbByPackage);
         }
@@ -73,6 +83,20 @@ public final class RunningApps {
             cachedRssUptimeMs = SystemClock.uptimeMillis();
         }
         return parsed;
+    }
+
+    private static Map<String, Long> fetchBridgeMemory() {
+        long now = SystemClock.uptimeMillis();
+        if (cachedBridgeMemUptimeMs > 0L && (now - cachedBridgeMemUptimeMs) <= 1200L) {
+            return cachedBridgeMemByPackage;
+        }
+        Map<String, Long> mem = RecentsBridgeClient.getProcessMemoryKb();
+        if (mem != null) {
+            cachedBridgeMemByPackage = mem;
+            cachedBridgeMemUptimeMs = now;
+            return mem;
+        }
+        return cachedBridgeMemByPackage;
     }
 
     private static void refreshRssAsyncIfStale(final RootHandler rootHandler) {
