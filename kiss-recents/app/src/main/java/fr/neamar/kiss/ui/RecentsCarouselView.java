@@ -117,6 +117,7 @@ public class RecentsCarouselView extends FrameLayout {
     private static final int REFLOW_DURATION_MS = 220;
     private static final long LAUNCH_ENTRANCE_DURATION_MS = 245L;
     private static final long LAUNCH_EXIT_DURATION_MS = 205L;
+    private static final int MAX_RECYCLED_POOL_SIZE = 16;
 
     private static final Interpolator LINEAR = new LinearInterpolator();
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
@@ -1620,6 +1621,8 @@ public class RecentsCarouselView extends FrameLayout {
         clearAllDismissRanks.clear();
         launchEntranceProgress = 1f;
         inFlightSnapshots.clear();
+        recycledUnfocusedViews.clear();
+        recycledUnfocusedBannerViews.clear();
         recycleVelocityTracker();
     }
 
@@ -3143,8 +3146,15 @@ public class RecentsCarouselView extends FrameLayout {
                     Result<?> item = adapter.getItem(adapterPos);
                     if (item instanceof AppResult) {
                         AppResult appResult = (AppResult) item;
+                        AppResult.BannerViewHolder holder = AppResult.obtainBannerHolder(view, false);
                         Bitmap cached = getResolvedUnfocusedSnapshot(appResult);
-                        appResult.displayUnfocusedBanner(getContext(), view, cached, greyscaleSnapshots, false);
+                        if (!holder.boundValid
+                                || holder.boundLightweight
+                                || holder.boundGreyscale != greyscaleSnapshots
+                                || !appResult.getPojoId().equals(holder.boundPojoId)
+                                || holder.boundSnapshot != cached) {
+                            appResult.displayUnfocusedBanner(getContext(), view, cached, greyscaleSnapshots, false);
+                        }
                     }
                 }
                 return view;
@@ -3159,6 +3169,7 @@ public class RecentsCarouselView extends FrameLayout {
                     : recycledUnfocusedBannerViews.remove(recycledUnfocusedBannerViews.size() - 1);
             if (convertView == null) {
                 convertView = LayoutInflater.from(getContext()).inflate(R.layout.item_app_unfocused_banner, this, false);
+                convertView.setTag(R.id.unfocused_banner_icon, Boolean.TRUE);
             }
             Result<?> item = adapter.getItem(adapterPos);
             if (item instanceof AppResult) {
@@ -3265,14 +3276,16 @@ public class RecentsCarouselView extends FrameLayout {
                 holder.fallbackIconView.setTranslationX(0f);
                 holder.fallbackIconView.setTranslationY(0f);
             }
-            recycledUnfocusedBannerViews.add(view);
-        } else {
+            if (recycledUnfocusedBannerViews.size() < MAX_RECYCLED_POOL_SIZE) {
+                recycledUnfocusedBannerViews.add(view);
+            }
+        } else if (recycledUnfocusedViews.size() < MAX_RECYCLED_POOL_SIZE) {
             recycledUnfocusedViews.add(view);
         }
     }
 
     private static boolean isUnfocusedBannerView(@Nullable View view) {
-        return view != null && view.findViewById(R.id.banner_snapshot) != null;
+        return view != null && Boolean.TRUE.equals(view.getTag(R.id.unfocused_banner_icon));
     }
 
     private float getAdjacentBannerFactor(int visualIdx) {
@@ -3421,6 +3434,9 @@ public class RecentsCarouselView extends FrameLayout {
                         TaskSnapshotCache.put(taskId, fresh);
                     } else {
                         TaskSnapshotCache.putThumb(taskId, fresh);
+                    }
+                    if (!isAttachedToWindow() || adapter == null) {
+                        return;
                     }
                     AppResult selected = getSelectedAppResult();
                     if (selected != null && selected.getPojo().taskId == taskId) {

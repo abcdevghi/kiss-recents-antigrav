@@ -32,6 +32,7 @@ import androidx.core.content.ContextCompat;
 import androidx.fragment.app.DialogFragment;
 import androidx.preference.PreferenceManager;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -110,6 +111,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     private long lastPausedUptimeMs;
     @Nullable
     private BroadcastReceiver screenLockReceiver;
+    private final Runnable updateRamRunnable = this::updateTotalRamDisplay;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -198,7 +200,8 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
                 stopApps(results);
                 adapter.removeResults(results);
                 if (homeBarView != null) {
-                    homeBarView.postDelayed(MainActivity.this::updateTotalRamDisplay, 350L);
+                    homeBarView.removeCallbacks(updateRamRunnable);
+                    homeBarView.postDelayed(updateRamRunnable, 350L);
                 }
             }
 
@@ -610,6 +613,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     @Override
     protected void onDestroy() {
         unregisterScreenLockReceiver();
+        if (homeBarView != null) {
+            homeBarView.removeCallbacks(updateRamRunnable);
+        }
         super.onDestroy();
         if (adapter == null) {
             // onCreate() bailed out early, nothing to clean up
@@ -755,18 +761,25 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         }
 
         if (wallpaperEnabled && blurEnabled) {
-            WallpaperBlurCache.requestAsyncIfNeeded(this, () -> runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) {
+            final WeakReference<MainActivity> activityRef = new WeakReference<>(this);
+            WallpaperBlurCache.requestAsyncIfNeeded(this, () -> {
+                MainActivity activity = activityRef.get();
+                if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
-                syncWallpaperEffects(false);
-                if (rootLayout != null) {
-                    rootLayout.invalidate();
-                }
-                if (getWindow() != null) {
-                    getWindow().getDecorView().invalidate();
-                }
-            }));
+                activity.runOnUiThread(() -> {
+                    if (activity.isFinishing() || activity.isDestroyed()) {
+                        return;
+                    }
+                    activity.syncWallpaperEffects(false);
+                    if (activity.rootLayout != null) {
+                        activity.rootLayout.invalidate();
+                    }
+                    if (activity.getWindow() != null) {
+                        activity.getWindow().getDecorView().invalidate();
+                    }
+                });
+            });
         }
     }
 

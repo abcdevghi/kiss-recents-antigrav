@@ -36,15 +36,18 @@ public final class KeepAlive {
     }
 
     public static void setKept(Context context, String packageName, boolean kept) {
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        // The set returned by SharedPreferences must not be modified: work on a copy
-        Set<String> packages = new HashSet<>(getCached(context));
-        if (kept) {
-            packages.add(packageName);
-        } else {
-            packages.remove(packageName);
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        Set<String> packages;
+        synchronized (KeepAlive.class) {
+            // The set returned by SharedPreferences must not be modified: work on a copy
+            packages = new HashSet<>(getCached(context));
+            if (kept) {
+                packages.add(packageName);
+            } else {
+                packages.remove(packageName);
+            }
+            cachedKeptPackages = Collections.unmodifiableSet(packages);
         }
-        cachedKeptPackages = Collections.unmodifiableSet(packages);
         prefs.edit().putStringSet(KEY, packages).apply();
 
         final Context appContext = context.getApplicationContext();
@@ -96,10 +99,15 @@ public final class KeepAlive {
     private static Set<String> getCached(Context context) {
         Set<String> cached = cachedKeptPackages;
         if (cached == null) {
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-            Set<String> stored = prefs.getStringSet(KEY, Collections.<String>emptySet());
-            cached = Collections.unmodifiableSet(new HashSet<>(stored));
-            cachedKeptPackages = cached;
+            synchronized (KeepAlive.class) {
+                cached = cachedKeptPackages;
+                if (cached == null) {
+                    SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+                    Set<String> stored = prefs.getStringSet(KEY, Collections.<String>emptySet());
+                    cached = Collections.unmodifiableSet(new HashSet<>(stored));
+                    cachedKeptPackages = cached;
+                }
+            }
         }
         return cached;
     }

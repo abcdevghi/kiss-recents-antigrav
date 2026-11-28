@@ -4,6 +4,7 @@ import android.app.WallpaperManager;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Build;
+import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -16,8 +17,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class WallpaperBlurCache {
 
+    private static final long WALLPAPER_ID_CHECK_INTERVAL_MS = 2000L;
+
     private static volatile Bitmap cachedBlurredWallpaper;
     private static volatile int cachedWallpaperId = Integer.MIN_VALUE;
+    private static volatile int lastObservedWallpaperId = Integer.MIN_VALUE;
+    private static volatile long lastWallpaperIdCheckMs = 0L;
     private static final AtomicBoolean FETCH_IN_FLIGHT = new AtomicBoolean(false);
 
     private WallpaperBlurCache() {
@@ -29,7 +34,7 @@ public final class WallpaperBlurCache {
         if (bmp == null || bmp.isRecycled()) {
             return null;
         }
-        int currentId = readWallpaperId(context);
+        int currentId = readWallpaperIdCached(context, false);
         if (currentId != Integer.MIN_VALUE && cachedWallpaperId != currentId) {
             return null;
         }
@@ -37,14 +42,22 @@ public final class WallpaperBlurCache {
     }
 
     public static void requestAsyncIfNeeded(@NonNull Context context, @NonNull Runnable onReady) {
-        if (get(context) != null || !RecentsBridgeClient.isAvailable()) {
+        // Force a fresh wallpaper ID check on explicit sync requests (e.g. onResume), without
+        // blocking every frame's onDraw() with a Binder IPC call.
+        int freshId = readWallpaperIdCached(context, true);
+        Bitmap existing = cachedBlurredWallpaper;
+        if (existing != null && !existing.isRecycled()
+                && (freshId == Integer.MIN_VALUE || cachedWallpaperId == freshId)) {
+            return;
+        }
+        if (!RecentsBridgeClient.isAvailable()) {
             return;
         }
         if (!FETCH_IN_FLIGHT.compareAndSet(false, true)) {
             return;
         }
         final Context appCtx = context.getApplicationContext();
-        final int targetWallpaperId = readWallpaperId(appCtx);
+        final int targetWallpaperId = freshId != Integer.MIN_VALUE ? freshId : readWallpaperId(appCtx);
         Utilities.getDefaultExecutor().execute(() -> {
             try {
                 Bitmap raw = RecentsBridgeClient.getWallpaperBitmap();
@@ -58,6 +71,8 @@ public final class WallpaperBlurCache {
                 if (blurred != null) {
                     cachedBlurredWallpaper = blurred;
                     cachedWallpaperId = targetWallpaperId;
+                    lastObservedWallpaperId = targetWallpaperId;
+                    lastWallpaperIdCheckMs = SystemClock.uptimeMillis();
                     onReady.run();
                 }
             } finally {
@@ -69,6 +84,20 @@ public final class WallpaperBlurCache {
     public static void clear() {
         cachedBlurredWallpaper = null;
         cachedWallpaperId = Integer.MIN_VALUE;
+        lastObservedWallpaperId = Integer.MIN_VALUE;
+        lastWallpaperIdCheckMs = 0L;
+    }
+
+    private static int readWallpaperIdCached(@NonNull Context context, boolean force) {
+        long now = SystemClock.uptimeMillis();
+        if (!force && lastWallpaperIdCheckMs > 0L
+                && (now - lastWallpaperIdCheckMs) < WALLPAPER_ID_CHECK_INTERVAL_MS) {
+            return lastObservedWallpaperId;
+        }
+        int id = readWallpaperId(context);
+        lastObservedWallpaperId = id;
+        lastWallpaperIdCheckMs = now;
+        return id;
     }
 
     private static int readWallpaperId(@NonNull Context context) {

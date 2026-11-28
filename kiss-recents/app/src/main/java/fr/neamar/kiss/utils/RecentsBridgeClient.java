@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
+import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 
@@ -38,7 +39,10 @@ public final class RecentsBridgeClient {
     private static final int TX_GET_WALLPAPER_BITMAP = IBinder.FIRST_CALL_TRANSACTION + 7;
     private static final int TX_GET_PROCESS_MEMORY = IBinder.FIRST_CALL_TRANSACTION + 8;
 
+    private static final long BINDER_PING_INTERVAL_MS = 1500L;
+
     private static volatile IBinder bridgeBinder;
+    private static volatile long lastPingUptimeMs = 0L;
 
     private RecentsBridgeClient() {
     }
@@ -54,6 +58,7 @@ public final class RecentsBridgeClient {
         IBinder binder = bundle.getBinder(KEY_BRIDGE_BINDER);
         if (binder != null && binder.pingBinder()) {
             bridgeBinder = binder;
+            lastPingUptimeMs = SystemClock.uptimeMillis();
         }
     }
 
@@ -62,10 +67,16 @@ public final class RecentsBridgeClient {
         if (binder == null) {
             return false;
         }
+        long now = SystemClock.uptimeMillis();
+        if (lastPingUptimeMs > 0L && (now - lastPingUptimeMs) < BINDER_PING_INTERVAL_MS) {
+            return true;
+        }
         if (!binder.pingBinder()) {
             bridgeBinder = null;
+            lastPingUptimeMs = 0L;
             return false;
         }
+        lastPingUptimeMs = now;
         return true;
     }
 

@@ -3,6 +3,7 @@ package fr.neamar.kiss.utils;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 
 import androidx.annotation.ColorInt;
@@ -25,11 +26,23 @@ public final class IconColorUtils {
             return fallbackColor;
         }
         Bitmap sample = null;
+        Drawable sampleDrawable = drawable;
+        Rect restoredBounds = null;
         try {
+            Drawable.ConstantState cs = drawable.getConstantState();
+            if (cs != null) {
+                Drawable clone = cs.newDrawable();
+                if (clone != null) {
+                    sampleDrawable = clone;
+                }
+            }
+            if (sampleDrawable == drawable) {
+                restoredBounds = drawable.copyBounds();
+            }
             sample = Bitmap.createBitmap(SAMPLE_SIZE, SAMPLE_SIZE, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(sample);
-            drawable.setBounds(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-            drawable.draw(canvas);
+            sampleDrawable.setBounds(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+            sampleDrawable.draw(canvas);
 
             int[] pixels = new int[SAMPLE_SIZE * SAMPLE_SIZE];
             sample.getPixels(pixels, 0, SAMPLE_SIZE, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
@@ -100,6 +113,9 @@ public final class IconColorUtils {
             }
         } catch (Throwable ignored) {
         } finally {
+            if (restoredBounds != null) {
+                drawable.setBounds(restoredBounds);
+            }
             if (sample != null && !sample.isRecycled()) {
                 sample.recycle();
             }
