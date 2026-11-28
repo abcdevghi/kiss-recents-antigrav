@@ -235,6 +235,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         // Left button: settings
         launcherButton.setOnClickListener(v -> {
             explicitlyNavigatedAway = true;
+            resetRecentsPressState();
             startActivity(new Intent(this, SettingsActivity.class));
         });
 
@@ -245,7 +246,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         });
 
         registerScreenLockReceiver();
-        handleRecentsPress(launchIntent, true);
+        handleRecentsPress(launchIntent, true, false);
     }
 
     @Override
@@ -346,6 +347,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        boolean wasNavigatedAway = explicitlyNavigatedAway;
         lockedWhileInRecents = false;
         homeSentForCurrentLock = false;
         explicitlyNavigatedAway = false;
@@ -357,7 +359,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
         syncWallpaperEffects(false);
-        handleRecentsPress(intent, false);
+        handleRecentsPress(intent, false, wasNavigatedAway);
     }
 
     private void resetRecentsPressState() {
@@ -371,7 +373,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
      * Single tap opens KISS Recents; a clean quick second tap while Recents is open jumps to the
      * previous app (or the current/last app when opened from Home, or after scrolling/interacting).
      */
-    private void handleRecentsPress(@Nullable Intent intent, boolean created) {
+    private void handleRecentsPress(@Nullable Intent intent, boolean created, boolean wasNavigatedAway) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_RECENTS_PRESSED, false)) {
             return;
         }
@@ -379,8 +381,11 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
 
         boolean openedFromHome = intent.getBooleanExtra(EXTRA_OPENED_FROM_HOME, false);
         long now = SystemClock.uptimeMillis();
+        boolean wasPausedInBackground = !resumed
+                && lastPausedUptimeMs > 0L
+                && (now - lastPausedUptimeMs) > 120L;
 
-        if (created || !started) {
+        if (created || !started || lastRecentsPress == 0L || wasNavigatedAway || wasPausedInBackground) {
             sessionStartUptimeMs = now;
             lastRecentsPress = now;
             sessionOpenedFromHome = openedFromHome;
@@ -388,13 +393,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
             return;
         }
 
-        long delta = lastRecentsPress > 0L ? (now - lastRecentsPress) : Long.MAX_VALUE;
+        long delta = now - lastRecentsPress;
         if (delta < DUPLICATE_BOUNCE_WINDOW_MS) {
             return;
         }
 
-        boolean cleanDoubleTap = lastRecentsPress > 0L
-                && delta < DOUBLE_PRESS_WINDOW_MS
+        boolean cleanDoubleTap = delta < DOUBLE_PRESS_WINDOW_MS
                 && !userInteractedInRecents;
         boolean targetCurrentApp = sessionOpenedFromHome || !cleanDoubleTap;
         lastRecentsPress = now;

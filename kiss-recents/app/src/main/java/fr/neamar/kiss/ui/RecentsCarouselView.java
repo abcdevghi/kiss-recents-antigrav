@@ -96,8 +96,8 @@ public class RecentsCarouselView extends FrameLayout {
     private static final float EARLY_MOMENTUM_KILL_DIST = 1.85f;
     private static final float EARLY_MOMENTUM_MIN_RATIO = 0.45f;
     private static final float EARLY_MOMENTUM_ABS_SPEED = 6.2f;
-    private static final float SPRING_STIFFNESS = 520f;
-    private static final float SPRING_DAMPING_RATIO = 0.54f;
+    private static final float SPRING_STIFFNESS = 460f;
+    private static final float SPRING_DAMPING_RATIO = 0.72f;
     private static final float SPRING_STOP_POS_EPS = 0.003f;
     private static final float SPRING_STOP_VEL_EPS = 0.10f;
     private static final float FLICK_NOTCH_CATCH_DIST = 0.16f;
@@ -106,8 +106,8 @@ public class RecentsCarouselView extends FrameLayout {
 
     private static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
     private static final Interpolator DECELERATE = new DecelerateInterpolator(1.6f);
-    private static final Interpolator OVERSHOOT = new OvershootInterpolator(1.1f);
-    private static final Interpolator ELASTIC_SNAP = new OvershootInterpolator(1.35f);
+    private static final Interpolator OVERSHOOT = new OvershootInterpolator(0.95f);
+    private static final Interpolator ELASTIC_SNAP = new OvershootInterpolator(0.85f);
     private static final Interpolator ACCELERATE = new AccelerateInterpolator(1.4f);
 
     private final int touchSlop;
@@ -255,7 +255,7 @@ public class RecentsCarouselView extends FrameLayout {
                     scrollItemPos += springVelocityItemsPerSec * subDt;
                 }
                 float avgVel = (scrollItemPos - oldPos) / dt;
-                scrollSwayPx = clamp(avgVel * DrawableUtils.dpToPx(getContext(), 4.5f), -maxScrollSwayPx, maxScrollSwayPx);
+                scrollSwayPx = clamp(avgVel * DrawableUtils.dpToPx(getContext(), 2.5f), -maxScrollSwayPx, maxScrollSwayPx);
                 updateWheelSpeed(oldPos, scrollItemPos);
                 thumbnailsSuppressed = isWheelMovingFast();
                 updateAutoSelectionFromScroll(true);
@@ -344,7 +344,7 @@ public class RecentsCarouselView extends FrameLayout {
                             || (dist <= 0.35f && dist < Math.abs(oldPos - targetIdx))
                             || dist <= 0.04f) {
                         float dir = (targetIdx >= scrollItemPos ? 1f : -1f);
-                        float transferVel = clamp(dir * curSpeedItems * 0.85f, -10.5f, 10.5f);
+                        float transferVel = clamp(dir * curSpeedItems * 0.58f, -6.5f, 6.5f);
                         scrollScroller.abortAnimation();
                         flingTargetVisualIdx = -1;
                         flingInitialVelItemsPerSec = 0f;
@@ -357,7 +357,7 @@ public class RecentsCarouselView extends FrameLayout {
                     if (Math.abs(scrollItemPos - nearestIdx) <= FLICK_NOTCH_CATCH_DIST
                             && scrollScroller.getCurrVelocity() < FLICK_NOTCH_CATCH_VEL) {
                         float dir = (nearestIdx >= scrollItemPos ? 1f : -1f);
-                        float transferVel = clamp(dir * (scrollScroller.getCurrVelocity() / 1000f) * 0.85f, -8f, 8f);
+                        float transferVel = clamp(dir * (scrollScroller.getCurrVelocity() / 1000f) * 0.60f, -5.0f, 5.0f);
                         scrollScroller.abortAnimation();
                         startSpringSnap(nearestIdx, transferVel);
                         releaseScrollSway();
@@ -1056,7 +1056,7 @@ public class RecentsCarouselView extends FrameLayout {
                         flingTargetVisualIdx = -1;
                         flingInitialVelItemsPerSec = 0f;
                         float dir = (targetIdx >= scrollItemPos ? 1f : -1f);
-                        float transferVel = dir * clamp(Math.abs(velMilli / 1000f) * 0.72f, 4.8f, 10.5f);
+                        float transferVel = dir * clamp(Math.abs(velMilli / 1000f) * 0.50f, 1.8f, 6.2f);
                         startSpringSnap(targetIdx, transferVel);
                         releaseScrollSway();
                     } else {
@@ -1079,7 +1079,7 @@ public class RecentsCarouselView extends FrameLayout {
                         : nearest;
                 float pxPerItem = Math.max(1f, unfocusedHeightPx + itemGapPx);
                 float kickDir = (target >= scrollItemPos ? 1f : -1f);
-                float startVel = kickDir * clamp(Math.abs(vy / pxPerItem), 4.8f, 9.5f);
+                float startVel = kickDir * clamp(Math.abs(vy / pxPerItem) * 0.70f, 1.5f, 5.2f);
                 startSpringSnap(target, startVel);
                 releaseScrollSway();
             } else {
