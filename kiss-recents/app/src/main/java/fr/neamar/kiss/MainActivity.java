@@ -382,6 +382,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         resetRecentsPressState();
         resetOpenSesameUi();
         if (carousel != null) {
+            carousel.cancelHomeExitAnimation();
             carousel.closeContextMenu();
             carousel.resetSelection();
         }
@@ -410,6 +411,9 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         disableActivityTransition();
         setIntent(intent);
         RecentsBridgeClient.attachFromIntent(intent);
+        if (carousel != null) {
+            carousel.cancelHomeExitAnimation();
+        }
         resetOpenSesameUi();
         syncWallpaperEffects(false);
         syncFeaturePrefs(false);
@@ -431,6 +435,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         boolean selectedBanner = prefs.getBoolean("selected-banner", false);
         boolean moreBanners = prefs.getBoolean("more-banners", false);
         boolean moreBannersAll = prefs.getBoolean("more-banners-all", false);
+        boolean moreBannersCalculatedSize = prefs.getBoolean("more-banners-calculated-size", false);
         boolean selectedBannerIcon = prefs.getBoolean("selected-banner-icon", false);
         boolean selectedBannerOutline = prefs.getBoolean("selected-banner-outline", false);
         boolean greyscale = prefs.getBoolean("snapshot-greyscale", false);
@@ -458,7 +463,7 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
         lastCarouselArc = carouselArc;
 
         carousel.setSelectedBanner(selectedBanner);
-        carousel.setMoreBanners(moreBanners, moreBannersAll);
+        carousel.setMoreBanners(moreBanners, moreBannersAll, moreBannersCalculatedSize);
         carousel.setSelectedBannerIcon(selectedBannerIcon);
         carousel.setSelectedBannerOutline(selectedBannerOutline);
         carousel.setGreyscaleSnapshots(greyscale);
@@ -628,6 +633,12 @@ public class MainActivity extends AppCompatActivity implements QueryInterface {
     }
 
     private void goHome() {
+        if (carousel != null && carousel.startHomeExitAnimation(() -> sendHomeIntent(true))) {
+            explicitlyNavigatedAway = true;
+            resetCarouselOnNextResume = true;
+            resetRecentsPressState();
+            return;
+        }
         sendHomeIntent(true);
     }
 

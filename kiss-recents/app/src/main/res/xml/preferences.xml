@@ -41,6 +41,12 @@
             app:title="@string/more_banners_all_title" />
         <androidx.preference.SwitchPreferenceCompat
             app:defaultValue="false"
+            app:dependency="more-banners-all"
+            app:key="more-banners-calculated-size"
+            app:summary="@string/more_banners_calculated_size_summary"
+            app:title="@string/more_banners_calculated_size_title" />
+        <androidx.preference.SwitchPreferenceCompat
+            app:defaultValue="false"
             app:dependency="selected-banner"
             app:key="selected-banner-icon"
             app:summary="@string/selected_banner_icon_summary"

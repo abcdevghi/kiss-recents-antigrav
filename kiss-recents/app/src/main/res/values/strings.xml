@@ -456,6 +456,8 @@
     <string name="more_banners_summary">Show shorter preview banners with icons for neighboring apps</string>
     <string name="more_banners_all_title">Preview banners for all apps</string>
     <string name="more_banners_all_summary">Use the shorter preview banner for every unfocused app instead of only adjacent ones</string>
+    <string name="more_banners_calculated_size_title">Calculated banner size</string>
+    <string name="more_banners_calculated_size_summary">Smoothly interpolate card height by position between standard, unfocused, and compact icon-height sizes</string>
     <string name="selected_banner_icon_title">Show icon on selected card</string>
     <string name="selected_banner_icon_summary">Display the app icon next to the title on the expanded preview card</string>
     <string name="selected_banner_outline_title">Colored card outline</string>
@@ -468,8 +470,8 @@
     <string name="tilt_sway_overshoot_summary">Tilt cards smoothly with scroll momentum and add elastic edge bounce</string>
     <string name="tactile_scroll_snapping_title">Tactile scroll snapping</string>
     <string name="tactile_scroll_snapping_summary">Add notch detents, scroll haptics, and auto-centering when scrolling ends</string>
-    <string name="launch_entrance_anim_title">Entrance slide &amp; fade</string>
-    <string name="launch_entrance_anim_summary">Briefly slide and fade entries from right to left when opening recents</string>
+    <string name="launch_entrance_anim_title">Entrance &amp; exit slide &amp; fade</string>
+    <string name="launch_entrance_anim_summary">Slide and fade entries out from the center when opening recents or going home</string>
     <string name="curved_context_menu_title">Curved swipe context menu</string>
     <string name="curved_context_menu_summary">Swipe left or long-press for floating icon actions instead of the classic popup menu</string>
     <string name="open_sesame_title">Open sesame launch</string>

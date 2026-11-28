@@ -57,7 +57,7 @@
             android:screenOrientation="user"
             android:stateNotNeeded="true"
             android:theme="@style/AppThemeTransparent"
-            android:windowSoftInputMode="stateAlwaysHidden|adjustResize"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing"
             android:configChanges="uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

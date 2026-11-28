@@ -52,6 +52,7 @@ public final class ConfigSlots {
             "selected-banner",
             "more-banners",
             "more-banners-all",
+            "more-banners-calculated-size",
             "selected-banner-icon",
             "selected-banner-outline",
             "snapshot-greyscale",
